@@ -19,7 +19,9 @@ class EuclideanVector {
         template <typename Iterator, typename = std::enable_if_t<
             std::is_arithmetic<typename std::iterator_traits<Iterator>::value_type>::value
         >>
-        EuclideanVector(Iterator begin, Iterator end) {
+        EuclideanVector(Iterator begin, Iterator end):
+            _normCache(-1.0)
+        {
             _dimensions = 0;
             for (auto cur = begin; cur != end; ++cur)
                 ++_dimensions;
@@ -74,6 +76,8 @@ class EuclideanVector {
     private:
         size_t _dimensions;
         Scalar* _vector;
+
+        mutable Scalar _normCache;
 };
 
 EuclideanVector operator+(const EuclideanVector& a, const EuclideanVector& b);

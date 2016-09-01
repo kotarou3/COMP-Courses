@@ -7,7 +7,8 @@
 namespace evec {
 
 EuclideanVector::EuclideanVector(size_t dimensions, Scalar initialValues):
-    _dimensions(dimensions)
+    _dimensions(dimensions),
+    _normCache(-1.0)
 {
     _vector = new Scalar[_dimensions];
     for (size_t d = 0; d < _dimensions; ++d)
@@ -15,7 +16,8 @@ EuclideanVector::EuclideanVector(size_t dimensions, Scalar initialValues):
 }
 
 EuclideanVector::EuclideanVector(const EuclideanVector& other):
-    _dimensions(other._dimensions)
+    _dimensions(other._dimensions),
+    _normCache(-1.0)
 {
     _vector = new Scalar[_dimensions];
     for (size_t d = 0; d < _dimensions; ++d)
@@ -50,6 +52,9 @@ EuclideanVector& EuclideanVector::operator=(EuclideanVector&& other) noexcept {
             delete[] _vector;
         _vector = std::move(other._vector);
         other._vector = nullptr;
+
+        _normCache = std::move(other._normCache);
+        other._normCache = -1.0;
     }
 
 
@@ -61,7 +66,7 @@ size_t EuclideanVector::getNumDimensions() const noexcept {
 }
 
 EuclideanVector::Scalar EuclideanVector::getEuclideanNorm() const noexcept {
-    return std::sqrt(*this * *this);
+    return _normCache < 0.0 ? _normCache = std::sqrt(*this * *this) : _normCache;
 }
 
 EuclideanVector EuclideanVector::createUnitVector() const {
@@ -85,6 +90,7 @@ const EuclideanVector::Scalar& EuclideanVector::operator[](size_t dimension) con
 }
 
 EuclideanVector::Scalar& EuclideanVector::operator[](size_t dimension) noexcept {
+    _normCache = -1.0;
     return _vector[dimension];
 }
 
@@ -94,6 +100,7 @@ EuclideanVector& EuclideanVector::operator+=(const EuclideanVector& other) {
 
     for (size_t d = 0; d < _dimensions; ++d)
         _vector[d] += other._vector[d];
+    _normCache = -1.0;
 
     return *this;
 }
@@ -104,6 +111,7 @@ EuclideanVector& EuclideanVector::operator-=(const EuclideanVector& other) {
 
     for (size_t d = 0; d < _dimensions; ++d)
         _vector[d] -= other._vector[d];
+    _normCache = -1.0;
 
     return *this;
 }
@@ -111,6 +119,7 @@ EuclideanVector& EuclideanVector::operator-=(const EuclideanVector& other) {
 EuclideanVector& EuclideanVector::operator*=(Scalar other) noexcept {
     for (size_t d = 0; d < _dimensions; ++d)
         _vector[d] *= other;
+    _normCache = -1.0;
 
     return *this;
 }
@@ -118,6 +127,7 @@ EuclideanVector& EuclideanVector::operator*=(Scalar other) noexcept {
 EuclideanVector& EuclideanVector::operator/=(Scalar other) noexcept {
     for (size_t d = 0; d < _dimensions; ++d)
         _vector[d] /= other;
+    _normCache = -1.0;
 
     return *this;
 }
