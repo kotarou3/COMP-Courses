@@ -22,7 +22,9 @@ EuclideanVector::EuclideanVector(const EuclideanVector& other):
         _vector[d] = other._vector[d];
 }
 
-EuclideanVector::EuclideanVector(EuclideanVector&& other) noexcept {
+EuclideanVector::EuclideanVector(EuclideanVector&& other) noexcept:
+    _vector(nullptr)
+{
     *this = std::move(other);
 }
 
@@ -44,6 +46,8 @@ EuclideanVector& EuclideanVector::operator=(EuclideanVector&& other) noexcept {
         _dimensions = std::move(other._dimensions);
         other._dimensions = 0;
 
+        if (_vector)
+            delete[] _vector;
         _vector = std::move(other._vector);
         other._vector = nullptr;
     }
