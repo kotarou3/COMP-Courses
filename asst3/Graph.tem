@@ -1,0 +1,395 @@
+#include <algorithm>
+#include <stdexcept>
+#include <vector>
+
+#include <assert.h>
+
+#include "ScopeGuard.h"
+
+namespace gdwg {
+
+template <typename NodeLabel, typename EdgeValue>
+Graph<NodeLabel, EdgeValue>::Graph(const Graph& other) {
+    using NodePtr = std::shared_ptr<Node>;
+    std::unordered_map<NodePtr, NodePtr> nodeCopyMap;
+    nodeCopyMap.reserve(_nodes.size());
+
+    // Copy the nodes
+    for (auto& node : other._nodes) {
+        std::shared_ptr<Node> oldNode = node.second;
+        std::shared_ptr<Node> newNode(new Node(*oldNode));
+
+        _nodes.insert(std::make_pair(node.first, newNode));
+        nodeCopyMap.insert(std::make_pair(std::move(oldNode), std::move(newNode)));
+    }
+
+    // Update the edges to the new nodes
+    for (auto& node : _nodes) {
+        for (auto& edges : node.second->adjacentNodes) {
+            assert(edges.second.size() > 0);
+
+            std::set<Edge> newEdges;
+            for (auto edge = edges.second.begin(); edge != edges.second.end(); ++edge) {
+                Edge newEdge = *edge;
+                newEdge.from = nodeCopyMap.at(edge->from.lock());
+                newEdge.to = nodeCopyMap.at(edge->to.lock());
+
+                assert(newEdges.insert(newEdge).second);
+            }
+            edges.second = std::move(newEdges);
+        }
+    }
+}
+
+template <typename NodeLabel, typename EdgeValue>
+Graph<NodeLabel, EdgeValue>& Graph<NodeLabel, EdgeValue>::operator=(const Graph<NodeLabel, EdgeValue>& other) {
+    Graph tmp(other);
+
+    using std::swap;
+    swap(*this, tmp);
+
+    return *this;
+}
+
+template <typename NodeLabel, typename EdgeValue>
+bool Graph<NodeLabel, EdgeValue>::addNode(const NodeLabel& label) {
+    return _nodes.insert(std::make_pair(label, std::make_shared<Node>())).second;
+}
+
+template <typename NodeLabel, typename EdgeValue>
+bool Graph<NodeLabel, EdgeValue>::addEdge(const NodeLabel& from, const NodeLabel& to, const EdgeValue& value) try {
+    const std::shared_ptr<Node>& fromNode = _nodes.at(from);
+    const std::shared_ptr<Node>& toNode = _nodes.at(to);
+
+    Edge edge = {
+        .from = fromNode,
+        .to = toNode,
+        .value = value
+    };
+
+    auto fromEdges = fromNode->adjacentNodes.find(to);
+    if (fromEdges != fromNode->adjacentNodes.end() && fromEdges->second.count(edge) > 0)
+        return false;
+
+    try {
+        assert(fromNode->adjacentNodes[to].insert(edge).second);
+        assert(toNode->adjacentNodes[from].insert(edge).second || fromNode == toNode);
+        return true;
+    } catch (...) {
+        // Revert the to→from edge creation
+        auto toEdges = toNode->adjacentNodes.find(from);
+        if (toEdges != toNode->adjacentNodes.end()) {
+            toEdges->second.erase(edge);
+            if (toEdges->second.empty())
+                toNode->adjacentNodes.erase(toEdges);
+        }
+
+        // Revert the from→to edge creation
+        auto fromEdges = fromNode->adjacentNodes.find(to);
+        if (fromEdges != fromNode->adjacentNodes.end()) {
+            fromEdges->second.erase(edge);
+            if (fromEdges->second.empty())
+                fromNode->adjacentNodes.erase(fromEdges);
+        }
+
+        throw;
+    }
+} catch (const std::out_of_range&) {
+    std::throw_with_nested(std::runtime_error("Can't add edge between a non-existent node"));
+}
+
+template <typename NodeLabel, typename EdgeValue>
+bool Graph<NodeLabel, EdgeValue>::replace(const NodeLabel& oldLabel, const NodeLabel& newLabel) try {
+    const std::shared_ptr<Node>& node = _nodes.at(oldLabel);
+
+    ScopeGuards guards;
+
+    // Create a new entry in the node lookup table
+    if (!_nodes.insert(std::make_pair(newLabel, node)).second)
+        return false;
+
+    guards.add(
+        [this, &oldLabel] {assert(_nodes.erase(oldLabel));}, // Commit
+        [this, &newLabel] {assert(_nodes.erase(newLabel));}  // Revert
+    );
+
+    // Create a new entry in every adjacent node's adjacency list
+    auto selfAdjacentEdges = node->adjacentNodes.end();
+    for (auto& edges : node->adjacentNodes) {
+        const std::shared_ptr<Node>& otherNode = _findOtherNode(node, edges.second);
+
+        auto otherEdges = otherNode->adjacentNodes.find(oldLabel);
+        assert(otherEdges != otherNode->adjacentNodes.end());
+
+        if (otherNode == node) {
+            assert(selfAdjacentEdges == node->adjacentNodes.end());
+            selfAdjacentEdges = otherEdges;
+            continue;
+        }
+
+        auto result = otherNode->adjacentNodes.insert(std::make_pair(newLabel, std::set<Edge>()));
+        assert(result.second);
+
+        auto& adjacentNodes = otherNode->adjacentNodes;
+        auto oldEdges = otherEdges;
+        auto newEdges = result.first;
+        guards.add(
+            [&adjacentNodes, oldEdges, newEdges] { // Commit
+                newEdges->second = std::move(oldEdges->second);
+                adjacentNodes.erase(oldEdges);
+            },
+            [&adjacentNodes, newEdges] { // Revert
+                adjacentNodes.erase(newEdges);
+            }
+        );
+    }
+
+    // Special case for self-adjacent edges, since editing them in the loop above
+    // would invalidate the iterators the range-based for loop uses
+    if (selfAdjacentEdges != node->adjacentNodes.end()) {
+        auto result = node->adjacentNodes.insert(std::make_pair(newLabel, std::set<Edge>()));
+        assert(result.second);
+
+        auto& adjacentNodes = node->adjacentNodes;
+        auto oldEdges = selfAdjacentEdges;
+        auto newEdges = result.first;
+        guards.add(
+            [&adjacentNodes, oldEdges, newEdges] { // Commit
+                newEdges->second = std::move(oldEdges->second);
+                adjacentNodes.erase(oldEdges);
+            },
+            [&adjacentNodes, newEdges] { // Revert
+                adjacentNodes.erase(newEdges);
+            }
+        );
+    }
+
+    guards.commit();
+    return true;
+} catch (const std::out_of_range&) {
+    std::throw_with_nested(std::runtime_error("Can't replace a non-existent node"));
+}
+
+template <typename NodeLabel, typename EdgeValue>
+void Graph<NodeLabel, EdgeValue>::mergeReplace(const NodeLabel& oldLabel, const NodeLabel& newLabel) try {
+    const std::shared_ptr<Node>& oldNode = _nodes.at(oldLabel);
+    const std::shared_ptr<Node>& newNode = _nodes.at(newLabel);
+    if (oldNode == newNode)
+        return;
+
+    ScopeGuards guards;
+
+    // For every edge connecting the old node
+    for (auto& oldEdges : oldNode->adjacentNodes) {
+        assert(oldEdges.second.size() > 0);
+
+        for (const auto& oldEdge : oldEdges.second) {
+            std::shared_ptr<Node> fromNode = oldEdge.from.lock();
+            std::shared_ptr<Node> toNode = oldEdge.to.lock();
+            assert(fromNode && toNode);
+
+            // Add a new edge with the old node replaced with the new
+            const NodeLabel& newFromLabel = fromNode == oldNode ? newLabel : oldEdges.first;
+            const NodeLabel& newToLabel = toNode == oldNode ? newLabel : oldEdges.first;
+            if (addEdge(newFromLabel, newToLabel, oldEdge.value)) {
+                const EdgeValue& value = oldEdge.value; // Work around GCC bug: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=66735
+                guards.add([this, &newFromLabel, &newToLabel, &value] { // Revert
+                    this->deleteEdge(newFromLabel, newToLabel, value);
+                });
+            }
+        }
+    }
+
+    // Commit changes and erase the old node (along with its edges)
+    guards.commit();
+    deleteNode(oldLabel);
+} catch (const std::out_of_range&) {
+    std::throw_with_nested(std::runtime_error("Can't merge a non-existent node"));
+}
+
+template <typename NodeLabel, typename EdgeValue>
+void Graph<NodeLabel, EdgeValue>::deleteNode(const NodeLabel& label) noexcept(is_noexcept_compare_v<NodeLabel>) {
+    auto node = _nodes.find(label);
+    if (node == _nodes.end())
+        return;
+
+    for (auto& edges : node->second->adjacentNodes) {
+        auto other = _findOtherNode(node->second, edges.second);
+        if (other != node->second)
+            other->adjacentNodes.erase(label);
+    }
+    _nodes.erase(label);
+}
+
+template <typename NodeLabel, typename EdgeValue>
+void Graph<NodeLabel, EdgeValue>::deleteEdge(const NodeLabel& from, const NodeLabel& to, const EdgeValue& value) noexcept(is_noexcept_compare_v<NodeLabel> && is_noexcept_compare_v<EdgeValue>) {
+    auto fromNode = _nodes.find(from);
+    auto toNode = _nodes.find(to);
+    if (fromNode == _nodes.end() || toNode == _nodes.end())
+        return;
+
+    auto fromToEdges = fromNode->second->adjacentNodes.find(to);
+    if (fromToEdges == fromNode->second->adjacentNodes.end())
+        return;
+
+    if (!_deleteEdge(fromToEdges->second, fromNode->second, toNode->second, value))
+        return;
+    if (fromToEdges->second.empty())
+        fromNode->second->adjacentNodes.erase(fromToEdges);
+
+    auto toFromEdges = toNode->second->adjacentNodes.find(from);
+    if (toFromEdges == toNode->second->adjacentNodes.end()) {
+        assert(fromNode == toNode);
+        return;
+    }
+
+    assert(_deleteEdge(toFromEdges->second, fromNode->second, toNode->second, value) || fromNode == toNode);
+    if (toFromEdges->second.empty())
+        toNode->second->adjacentNodes.erase(toFromEdges);
+}
+
+template <typename NodeLabel, typename EdgeValue>
+void Graph<NodeLabel, EdgeValue>::clear() noexcept {
+    _nodes.clear();
+}
+
+template <typename NodeLabel, typename EdgeValue>
+bool Graph<NodeLabel, EdgeValue>::isNode(const NodeLabel& label) const noexcept {
+    return _nodes.count(label) > 0;
+}
+
+template <typename NodeLabel, typename EdgeValue>
+bool Graph<NodeLabel, EdgeValue>::isConnected(const NodeLabel& from, const NodeLabel& to) const try {
+    const std::shared_ptr<Node>& fromNode = _nodes.at(from);
+    const std::shared_ptr<Node>& toNode = _nodes.at(to);
+
+    const auto& edges = fromNode->adjacentNodes.find(to);
+    if (edges == fromNode->adjacentNodes.cend())
+        return false;
+
+    for (const auto& edge : edges->second)
+        if (edge.to.lock() == toNode)
+            return true;
+
+    return false;
+} catch (const std::out_of_range&) {
+    std::throw_with_nested(std::runtime_error("Tried to check if a non-existent node is connected"));
+}
+
+template <typename NodeLabel, typename EdgeValue>
+void Graph<NodeLabel, EdgeValue>::printNodes(std::ostream& out) const {
+    std::vector<std::pair<size_t, NodeLabel>> sortedNodes;
+    sortedNodes.reserve(_nodes.size());
+
+    for (const auto& node : _nodes) {
+        size_t outEdgeCount = 0;
+        for (const auto& edges : node.second->adjacentNodes) {
+            assert(edges.second.size() > 0);
+            for (const auto& edge : edges.second)
+                if (edge.from.lock() == node.second)
+                    ++outEdgeCount;
+        }
+        sortedNodes.push_back(std::make_pair(outEdgeCount, node.first));
+    }
+
+    std::sort(sortedNodes.begin(), sortedNodes.end());
+
+    for (const auto& node : sortedNodes)
+        out << node.second << "\n";
+}
+
+template <typename NodeLabel, typename EdgeValue>
+void Graph<NodeLabel, EdgeValue>::printEdges(const NodeLabel& from, std::ostream& out) const {
+    const std::shared_ptr<Node>& node = _nodes.at(from);
+
+    std::vector<std::pair<EdgeValue, NodeLabel>> sortedEdges;
+    sortedEdges.reserve(node->adjacentNodes.size());
+
+    for (const auto& edges : node->adjacentNodes) {
+        assert(edges.second.size() > 0);
+        for (const auto& edge : edges.second)
+            if (edge.from.lock() == node)
+                sortedEdges.push_back(std::make_pair(edge.value, edges.first));
+    }
+
+    std::sort(sortedEdges.begin(), sortedEdges.end());
+
+    out << "Edges attached to Node " << from << "\n";
+    if (sortedEdges.size())
+        for (const auto& edge : sortedEdges)
+            out << edge.second << " " << edge.first << "\n";
+    else
+        out << "(null)\n";
+}
+
+template <typename NodeLabel, typename EdgeValue>
+void Graph<NodeLabel, EdgeValue>::begin() const noexcept {
+    _nodesIterator = _nodes.cbegin();
+}
+
+template <typename NodeLabel, typename EdgeValue>
+bool Graph<NodeLabel, EdgeValue>::end() const noexcept {
+    return _nodesIterator == _nodes.cend();
+}
+
+template <typename NodeLabel, typename EdgeValue>
+void Graph<NodeLabel, EdgeValue>::next() const noexcept {
+    ++_nodesIterator;
+}
+
+template <typename NodeLabel, typename EdgeValue>
+const NodeLabel& Graph<NodeLabel, EdgeValue>::value() const noexcept {
+    return _nodesIterator->first;
+}
+
+template <typename NodeLabel, typename EdgeValue>
+std::shared_ptr<typename Graph<NodeLabel, EdgeValue>::Node> Graph<NodeLabel, EdgeValue>::_findOtherNode(const std::shared_ptr<Node>& node, std::set<Edge>& edges) const noexcept {
+    assert(edges.size() > 0);
+    const Edge& edge = *edges.begin();
+
+    std::shared_ptr<Node> from = edge.from.lock();
+    std::shared_ptr<Node> to = edge.to.lock();
+    assert(from && to);
+
+    std::shared_ptr<Node> otherNode;
+    if (node == from)
+        return to;
+    else if (node == to)
+        return from;
+    else
+        assert(false);
+}
+
+template <typename NodeLabel, typename EdgeValue>
+bool Graph<NodeLabel, EdgeValue>::_deleteEdge(
+    std::set<Edge>& edges,
+    const std::shared_ptr<Node>& from,
+    const std::shared_ptr<Node>& to,
+    const EdgeValue& value
+) noexcept(is_noexcept_compare_v<EdgeValue>) {
+    if (noexcept(EdgeValue(value))) {
+        // Copy constructor doesn't throw! Simple and fast case
+        Edge edge = {
+            .from = from,
+            .to = to,
+            .value = value
+        };
+
+        return edges.erase(edge);
+    } else {
+        // Fall back to linear search (though could still do binary search)
+        for (auto edge = edges.begin(); edge != edges.end(); ++edge) {
+            // Match how std::set does key matching, in case operator== does
+            // something different
+            auto a = std::tie(edge->from, edge->to, edge->value);
+            auto b = std::tie(from, to, value);
+            if (!(a < b) && !(b < a)) {
+                edges.erase(edge);
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+}
