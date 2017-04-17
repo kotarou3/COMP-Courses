@@ -1,0 +1,5 @@
+tests/*/*_out.hex
+
+transcript
+vsim.wlf
+work

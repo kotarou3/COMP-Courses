@@ -1,0 +1,3 @@
+To run a test, change your current working directory to the test you want to run, then run the ModelSim "do ../test.do" command.
+
+Makefile to automate this coming soon™
