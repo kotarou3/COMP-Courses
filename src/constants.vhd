@@ -25,11 +25,28 @@ package constants is
     constant XLEN_ONE: register_t := (0 => '1', others => '0');
     constant ADDRESS_ZERO: address_t := (others => '0');
 
+    type next_pc_source_t is (
+        NEXT_PC_DEFAULT,
+        NEXT_PC_BRANCH_OUT,
+        NEXT_PC_ALU_OUT
+    );
+
     type alu_op_t is (
         ALU_ADD, ALU_SUB,
         ALU_SLT, ALU_SLTU,
         ALU_XOR, ALU_OR, ALU_AND,
         ALU_SLL, ALU_SRL, ALU_SRA
+    );
+    type alu_in1_source_t is (
+        ALU_IN1_RS1_DATA,
+        ALU_IN1_PC,
+        ALU_IN1_ZERO
+    );
+    type alu_in2_source_t is (
+        ALU_IN2_RS2_DATA,
+        ALU_IN2_I_IMM,
+        ALU_IN2_S_IMM,
+        ALU_IN2_U_IMM
     );
 
     type branch_op_t is (
@@ -37,5 +54,20 @@ package constants is
         BRANCH_EQ, BRANCH_NE,
         BRANCH_LT, BRANCH_GE,
         BRANCH_LTU, BRANCH_GEU
+    );
+    type branch_offset_source_t is (
+        BRANCH_OFFSET_SB_IMM,
+        BRANCH_OFFSET_UJ_IMM
+    );
+
+    type rd_data_source_t is (
+        RD_DATA_DMEM_OUT,
+        RD_DATA_ALU_OUT,
+        RD_DATA_DEFAULT_NEXT_PC
+    );
+
+    type dmem_address_source_t is (
+        DMEM_ADDRESS_ALU_OUT,
+        DMEM_ADDRESS_NONE
     );
 end constants;

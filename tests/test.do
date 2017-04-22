@@ -1,4 +1,6 @@
-vcom -2008 ../../src/*.vhd ../processor-testbench.vhw
+vcom -2008 ../../src/constants.vhd ../../src/instructions.vhd
+vcom -2008 ../../src/*.vhd
+vcom -2008 ../processor-testbench.vhw
 vsim processor_testbench
 
 add wave -noupdate -format Logic -radix hexadecimal /processor_testbench/enable
