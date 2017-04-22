@@ -9,6 +9,7 @@ use work.instructions.all;
 entity decoder is
     port (
         inst: in instruction_t;
+        inst_imm: out register_t;
 
         next_pc_source: out next_pc_source_t;
 
@@ -17,7 +18,6 @@ entity decoder is
         alu_in2_source: out alu_in2_source_t;
 
         branch_op: out branch_op_t;
-        branch_offset_source: out branch_offset_source_t;
 
         rd_data_source: out rd_data_source_t;
         rd_write_enable: out boolean;
@@ -28,7 +28,17 @@ entity decoder is
 end decoder;
 
 architecture arch of decoder is
+    type inst_type_t is (INST_TYPE_R, INST_TYPE_I, INST_TYPE_S, INST_TYPE_SB, INST_TYPE_U, INST_TYPE_UJ);
+    signal inst_type: inst_type_t;
 begin
+    with inst_type select inst_imm <=
+        XLEN_ZERO                   when INST_TYPE_R,
+        instruction_i_imm(inst)     when INST_TYPE_I,
+        instruction_s_imm(inst)     when INST_TYPE_S,
+        instruction_sb_imm(inst)    when INST_TYPE_SB,
+        instruction_u_imm(inst)     when INST_TYPE_U,
+        instruction_uj_imm(inst)    when INST_TYPE_UJ;
+
     process (inst)
     begin
         -- Defaults to prevent latches
@@ -39,7 +49,6 @@ begin
         alu_in2_source <= ALU_IN2_RS2_DATA;
 
         branch_op <= BRANCH_JUMP;
-        branch_offset_source <= BRANCH_OFFSET_SB_IMM;
 
         rd_data_source <= RD_DATA_ALU_OUT;
         rd_write_enable <= false;
@@ -50,9 +59,11 @@ begin
         case instruction_opcode(inst) is
             when OP_LOAD =>
                 assert instruction_funct(inst) ?= FUNCT_LD report "Invalid instruction" severity error;
+                inst_type <= INST_TYPE_I;
+
                 alu_op <= ALU_ADD;
                 alu_in1_source <= ALU_IN1_RS1_DATA;
-                alu_in2_source <= ALU_IN2_I_IMM;
+                alu_in2_source <= ALU_IN2_IMM;
 
                 dmem_address_source <= DMEM_ADDRESS_ALU_OUT;
                 dmem_write_enable <= false;
@@ -62,14 +73,18 @@ begin
 
             when OP_STORE =>
                 assert instruction_funct(inst) ?= FUNCT_SD report "Invalid instruction" severity error;
+                inst_type <= INST_TYPE_S;
+
                 alu_op <= ALU_ADD;
                 alu_in1_source <= ALU_IN1_RS1_DATA;
-                alu_in2_source <= ALU_IN2_S_IMM;
+                alu_in2_source <= ALU_IN2_IMM;
 
                 dmem_address_source <= DMEM_ADDRESS_ALU_OUT;
                 dmem_write_enable <= true;
 
             when OP_OP_IMM =>
+                inst_type <= INST_TYPE_I;
+
                 case? instruction_funct(inst) is
                     when FUNCT_ADDI =>
                         alu_op <= ALU_ADD;
@@ -94,28 +109,34 @@ begin
                 end case?;
 
                 alu_in1_source <= ALU_IN1_RS1_DATA;
-                alu_in2_source <= ALU_IN2_I_IMM;
+                alu_in2_source <= ALU_IN2_IMM;
 
                 rd_data_source <= RD_DATA_ALU_OUT;
                 rd_write_enable <= true;
 
             when OP_LUI =>
+                inst_type <= INST_TYPE_U;
+
                 alu_op <= ALU_ADD;
                 alu_in1_source <= ALU_IN1_ZERO;
-                alu_in2_source <= ALU_IN2_U_IMM;
+                alu_in2_source <= ALU_IN2_IMM;
 
                 rd_data_source <= RD_DATA_ALU_OUT;
                 rd_write_enable <= true;
 
             when OP_AUIPC =>
+                inst_type <= INST_TYPE_U;
+
                 alu_op <= ALU_ADD;
                 alu_in1_source <= ALU_IN1_PC;
-                alu_in2_source <= ALU_IN2_U_IMM;
+                alu_in2_source <= ALU_IN2_IMM;
 
                 rd_data_source <= RD_DATA_ALU_OUT;
                 rd_write_enable <= true;
 
             when OP_OP =>
+                inst_type <= INST_TYPE_R;
+
                 case? instruction_funct(inst) is
                     when FUNCT_ADD =>
                         alu_op <= ALU_ADD;
@@ -148,18 +169,20 @@ begin
                 rd_write_enable <= true;
 
             when OP_JAL =>
-                branch_op <= BRANCH_JUMP;
-                branch_offset_source <= BRANCH_OFFSET_UJ_IMM;
+                inst_type <= INST_TYPE_UJ;
 
+                branch_op <= BRANCH_JUMP;
                 next_pc_source <= NEXT_PC_BRANCH_OUT;
 
                 rd_data_source <= RD_DATA_DEFAULT_NEXT_PC;
                 rd_write_enable <= true;
 
             when OP_JALR =>
+                inst_type <= INST_TYPE_I;
+
                 alu_op <= ALU_ADD;
                 alu_in1_source <= ALU_IN1_RS1_DATA;
-                alu_in2_source <= ALU_IN2_I_IMM;
+                alu_in2_source <= ALU_IN2_IMM;
 
                 next_pc_source <= NEXT_PC_ALU_OUT;
 
@@ -167,6 +190,8 @@ begin
                 rd_write_enable <= true;
 
             when OP_BRANCH =>
+                inst_type <= INST_TYPE_SB;
+
                 case? instruction_funct(inst) is
                     when FUNCT_BEQ =>
                         branch_op <= BRANCH_EQ;
@@ -183,7 +208,6 @@ begin
                     when others =>
                         assert false report "Invalid instruction" severity error;
                 end case?;
-                branch_offset_source <= BRANCH_OFFSET_SB_IMM;
                 next_pc_source <= NEXT_PC_BRANCH_OUT;
 
             when others =>

@@ -44,9 +44,7 @@ package constants is
     );
     type alu_in2_source_t is (
         ALU_IN2_RS2_DATA,
-        ALU_IN2_I_IMM,
-        ALU_IN2_S_IMM,
-        ALU_IN2_U_IMM
+        ALU_IN2_IMM
     );
 
     type branch_op_t is (
@@ -54,10 +52,6 @@ package constants is
         BRANCH_EQ, BRANCH_NE,
         BRANCH_LT, BRANCH_GE,
         BRANCH_LTU, BRANCH_GEU
-    );
-    type branch_offset_source_t is (
-        BRANCH_OFFSET_SB_IMM,
-        BRANCH_OFFSET_UJ_IMM
     );
 
     type rd_data_source_t is (

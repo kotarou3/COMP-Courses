@@ -16,6 +16,7 @@ end processor;
 architecture arch of processor is
     signal pc, default_next_pc: address_t;
     signal inst: instruction_t;
+    signal inst_imm: register_t;
 
     signal next_pc_source: next_pc_source_t;
     signal next_pc: address_t;
@@ -27,7 +28,6 @@ architecture arch of processor is
     signal alu_out: register_t;
 
     signal branch_op: branch_op_t;
-    signal branch_offset_source: branch_offset_source_t;
     signal branch_in1, branch_in2, branch_offset: register_t;
     signal branch_out: register_t;
 
@@ -57,6 +57,7 @@ begin
 
     decoder: entity work.decoder port map(
         inst => inst,
+        inst_imm => inst_imm,
 
         next_pc_source => next_pc_source,
 
@@ -65,7 +66,6 @@ begin
         alu_in2_source => alu_in2_source,
 
         branch_op => branch_op,
-        branch_offset_source => branch_offset_source,
 
         rd_data_source => rd_data_source,
         rd_write_enable => rd_write_enable,
@@ -85,10 +85,8 @@ begin
         signed(pc)  when ALU_IN1_PC,
         XLEN_ZERO   when ALU_IN1_ZERO;
     with alu_in2_source select alu_in2 <=
-        rs2_data                when ALU_IN2_RS2_DATA,
-        instruction_i_imm(inst) when ALU_IN2_I_IMM,
-        instruction_s_imm(inst) when ALU_IN2_S_IMM,
-        instruction_u_imm(inst) when ALU_IN2_U_IMM;
+        rs2_data    when ALU_IN2_RS2_DATA,
+        inst_imm    when ALU_IN2_IMM;
 
     branch_unit: entity work.branch_unit port map(
         branch_op => branch_op,
@@ -99,9 +97,7 @@ begin
     );
     branch_in1 <= rs1_data;
     branch_in2 <= rs2_data;
-    with branch_offset_source select branch_offset <=
-        instruction_sb_imm(inst)    when BRANCH_OFFSET_SB_IMM,
-        instruction_uj_imm(inst)    when BRANCH_OFFSET_UJ_IMM;
+    branch_offset <= inst_imm;
 
     gp_registers: entity work.gp_registers port map(
         enable => enable,
