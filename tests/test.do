@@ -6,7 +6,10 @@ add wave -noupdate -format Logic -radix hexadecimal /processor_testbench/clock
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/pc
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/next_pc
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/inst
-add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/op_type
+add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/next_pc_source
+add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/alu_in2_source
+add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/rd_data_source
+add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/dmem_address_source
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/gp_registers/rs1
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/gp_registers/rs2
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/gp_registers/rd

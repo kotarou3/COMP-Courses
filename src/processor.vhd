@@ -18,13 +18,18 @@ architecture arch of processor is
     signal pc_offset: register_t;
     signal inst: instruction_t;
 
-    type op_type_t is (OP_TYPE_MEMORY, OP_TYPE_ALU, OP_TYPE_JUMP, OP_TYPE_BRANCH, OP_TYPE_OTHER);
-    signal op_type: op_type_t;
     signal decoder_next_pc: address_t;
     signal decoder_rd_data: register_t;
 
-    type alu_in2_type_t is (ALU_IN2_REG, ALU_IN2_I_IMM, ALU_IN2_S_IMM);
-    signal alu_in2_type: alu_in2_type_t;
+    type next_pc_source_t is (NEXT_PC_DECODER, NEXT_PC_BRANCH, NEXT_PC_DEFAULT);
+    type alu_in2_source_t is (ALU_IN2_RS2_DATA, ALU_IN2_I_IMM, ALU_IN2_S_IMM);
+    type rd_data_source_t is (RD_DATA_DMEM_OUT, RD_DATA_ALU_OUT, RD_DATA_DECODER);
+    type dmem_address_source_t is (DMEM_ADDRESS_ALU_OUT, DMEM_ADDRESS_NONE);
+    signal next_pc_source: next_pc_source_t;
+    signal alu_in2_source: alu_in2_source_t;
+    signal rd_data_source: rd_data_source_t;
+    signal dmem_address_source: dmem_address_source_t;
+
     signal alu_op: alu_op_t;
     signal alu_in1, alu_in2: register_t;
     signal alu_out: register_t;
@@ -51,24 +56,26 @@ begin
         end if;
     end process;
 
-    with op_type select rd_data <=
-        dmem_out        when OP_TYPE_MEMORY,
-        alu_out         when OP_TYPE_ALU,
-        decoder_rd_data when others;
+    with rd_data_source select rd_data <=
+        dmem_out        when RD_DATA_DMEM_OUT,
+        alu_out         when RD_DATA_ALU_OUT,
+        decoder_rd_data when RD_DATA_DECODER;
 
-    with op_type select next_pc <=
-        decoder_next_pc                         when OP_TYPE_JUMP,
-        default_next_pc + unsigned(branch_out)  when OP_TYPE_BRANCH,
-        default_next_pc                         when others;
+    with next_pc_source select next_pc <=
+        decoder_next_pc                         when NEXT_PC_DECODER,
+        default_next_pc + unsigned(branch_out)  when NEXT_PC_BRANCH,
+        default_next_pc                         when NEXT_PC_DEFAULT;
 
     alu_in1 <= rs1_data;
-    with alu_in2_type select alu_in2 <=
-        rs2_data                when ALU_IN2_REG,
+    with alu_in2_source select alu_in2 <=
+        rs2_data                when ALU_IN2_RS2_DATA,
         instruction_i_imm(inst) when ALU_IN2_I_IMM,
         instruction_s_imm(inst) when ALU_IN2_S_IMM;
 
     dmem_in <= rs2_data;
-    dmem_address <= unsigned(alu_out) when op_type = OP_TYPE_MEMORY else (others => '0');
+    with dmem_address_source select dmem_address <=
+        unsigned(alu_out)   when DMEM_ADDRESS_ALU_OUT,
+        (others => '0')     when DMEM_ADDRESS_NONE;
 
     branch_in1 <= rs1_data;
     branch_in2 <= rs2_data;
@@ -76,23 +83,28 @@ begin
 
     decoder: process (inst, rs1_data)
     begin
-        dmem_write_enable <= false;
+        -- Defaults to prevent latches
+        next_pc_source <= NEXT_PC_DEFAULT;
+        alu_in2_source <= ALU_IN2_RS2_DATA;
+        rd_data_source <= RD_DATA_ALU_OUT;
+        dmem_address_source <= DMEM_ADDRESS_NONE;
         rd_write_enable <= false;
-        op_type <= OP_TYPE_OTHER;
+        dmem_write_enable <= false;
 
         case instruction_opcode(inst) is
             when OP_LOAD =>
                 assert instruction_funct(inst) = FUNCT_LD report "Invalid instruction" severity error;
-                op_type <= OP_TYPE_MEMORY;
                 alu_op <= ALU_ADD;
-                alu_in2_type <= ALU_IN2_I_IMM;
+                alu_in2_source <= ALU_IN2_I_IMM;
+                dmem_address_source <= DMEM_ADDRESS_ALU_OUT;
+                rd_data_source <= RD_DATA_DMEM_OUT;
                 rd_write_enable <= true;
 
             when OP_STORE =>
                 assert instruction_funct(inst) = FUNCT_SD report "Invalid instruction" severity error;
-                op_type <= OP_TYPE_MEMORY;
                 alu_op <= ALU_ADD;
-                alu_in2_type <= ALU_IN2_S_IMM;
+                alu_in2_source <= ALU_IN2_S_IMM;
+                dmem_address_source <= DMEM_ADDRESS_ALU_OUT;
                 dmem_write_enable <= true;
 
             when OP_OP_IMM =>
@@ -119,16 +131,18 @@ begin
                         assert false report "Invalid instruction" severity error;
                 end case;
 
-                alu_in2_type <= ALU_IN2_I_IMM;
+                alu_in2_source <= ALU_IN2_I_IMM;
+                rd_data_source <= RD_DATA_ALU_OUT;
                 rd_write_enable <= true;
-                op_type <= OP_TYPE_ALU;
 
             when OP_LUI =>
                 decoder_rd_data <= instruction_u_imm(inst);
+                rd_data_source <= RD_DATA_DECODER;
                 rd_write_enable <= true;
 
             when OP_AUIPC =>
                 decoder_rd_data <= signed(pc) + instruction_u_imm(inst);
+                rd_data_source <= RD_DATA_DECODER;
                 rd_write_enable <= true;
 
             when OP_OP =>
@@ -157,22 +171,24 @@ begin
                         assert false report "Invalid instruction" severity error;
                 end case;
 
-                alu_in2_type <= ALU_IN2_REG;
+                alu_in2_source <= ALU_IN2_RS2_DATA;
+                rd_data_source <= RD_DATA_ALU_OUT;
                 rd_write_enable <= true;
-                op_type <= OP_TYPE_ALU;
 
             when OP_JAL =>
                 decoder_rd_data <= signed(default_next_pc);
                 decoder_next_pc <= unsigned(signed(default_next_pc) + instruction_uj_imm(inst));
+                rd_data_source <= RD_DATA_DECODER;
                 rd_write_enable <= true;
-                op_type <= OP_TYPE_JUMP;
+                next_pc_source <= NEXT_PC_DECODER;
 
             when OP_JALR =>
                 assert instruction_funct(inst) = FUNCT_JALR report "Invalid instruction" severity error;
                 decoder_rd_data <= signed(default_next_pc);
                 decoder_next_pc <= unsigned(rs1_data + instruction_i_imm(inst));
+                rd_data_source <= RD_DATA_DECODER;
                 rd_write_enable <= true;
-                op_type <= OP_TYPE_JUMP;
+                next_pc_source <= NEXT_PC_DECODER;
 
             when OP_BRANCH =>
                 case instruction_funct(inst) is
@@ -191,7 +207,7 @@ begin
                     when others =>
                         assert false report "Invalid instruction" severity error;
                 end case;
-                op_type <= OP_TYPE_BRANCH;
+                next_pc_source <= NEXT_PC_BRANCH;
 
             when others =>
                 assert false report "Invalid instruction" severity error;
