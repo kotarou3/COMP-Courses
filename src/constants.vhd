@@ -55,13 +55,100 @@ package constants is
     );
 
     type rd_data_source_t is (
-        RD_DATA_DMEM_OUT,
         RD_DATA_ALU_OUT,
+        RD_DATA_DMEM_OUT,
         RD_DATA_DEFAULT_NEXT_PC
     );
 
     type dmem_address_source_t is (
         DMEM_ADDRESS_ALU_OUT,
         DMEM_ADDRESS_NONE
+    );
+
+    type ifid_t is record
+        pc, default_next_pc: address_t;
+        inst: instruction_t;
+    end record;
+
+    type idex_t is record
+        pc, default_next_pc: address_t;
+        next_pc_source: next_pc_source_t;
+
+        alu_op: alu_op_t;
+        alu_in1, alu_in2: register_t;
+
+        is_branch: boolean;
+        branch_op: branch_op_t;
+        branch_in1, branch_in2, branch_offset: register_t;
+
+        rd: natural range 0 to REGISTERS - 1;
+        rd_data_source: rd_data_source_t;
+        rd_write_enable: boolean;
+
+        dmem_address_source: dmem_address_source_t;
+        dmem_in: data_t;
+        dmem_write_enable: boolean;
+    end record;
+
+    type exmem_t is record
+        default_next_pc: address_t;
+
+        rd: natural range 0 to REGISTERS - 1;
+        rd_data_source: rd_data_source_t;
+        rd_write_enable: boolean;
+
+        alu_out: register_t;
+
+        dmem_address: address_t;
+        dmem_in: data_t;
+        dmem_write_enable: boolean;
+    end record;
+
+    type memwb_t is record
+        rd: natural range 0 to REGISTERS - 1;
+        rd_data: register_t;
+        rd_write_enable: boolean;
+    end record;
+
+    constant IFID_ZERO: ifid_t := (
+        pc => ADDRESS_ZERO, default_next_pc => ADDRESS_ZERO,
+        inst => (others => '0')
+    );
+    constant IDEX_ZERO: idex_t := (
+        pc => ADDRESS_ZERO, default_next_pc => ADDRESS_ZERO,
+        next_pc_source => NEXT_PC_DEFAULT,
+
+        alu_op => ALU_ADD,
+        alu_in1 => XLEN_ZERO, alu_in2 => XLEN_ZERO,
+
+        is_branch => false,
+        branch_op => BRANCH_JUMP,
+        branch_in1 => XLEN_ZERO, branch_in2 => XLEN_ZERO, branch_offset => XLEN_ZERO,
+
+        rd => 0,
+        rd_data_source => RD_DATA_ALU_OUT,
+        rd_write_enable => false,
+
+        dmem_address_source => DMEM_ADDRESS_NONE,
+        dmem_in => XLEN_ZERO,
+        dmem_write_enable => false
+    );
+    constant EXMEM_ZERO: exmem_t := (
+        default_next_pc => ADDRESS_ZERO,
+
+        rd => 0,
+        rd_data_source => RD_DATA_ALU_OUT,
+        rd_write_enable => false,
+
+        alu_out => XLEN_ZERO,
+
+        dmem_address => ADDRESS_ZERO,
+        dmem_in => XLEN_ZERO,
+        dmem_write_enable => false
+    );
+    constant MEMWB_ZERO: memwb_t := (
+        rd => 0,
+        rd_data => XLEN_ZERO,
+        rd_write_enable => false
     );
 end constants;

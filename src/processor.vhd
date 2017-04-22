@@ -14,115 +14,127 @@ entity processor is
 end processor;
 
 architecture arch of processor is
-    signal pc, default_next_pc: address_t;
-    signal inst: instruction_t;
-    signal inst_imm: register_t;
+    signal pc, next_pc: address_t;
+    signal branch_next_pc: address_t;
 
-    signal next_pc_source: next_pc_source_t;
-    signal next_pc: address_t;
+    signal ifid_in, ifid_out: ifid_t;
+    signal idex_in, idex_out: idex_t;
+    signal exmem_in, exmem_out: exmem_t;
+    signal memwb_in, memwb_out: memwb_t;
 
-    signal alu_op: alu_op_t;
-    signal alu_in1_source: alu_in1_source_t;
-    signal alu_in2_source: alu_in2_source_t;
-    signal alu_in1, alu_in2: register_t;
-    signal alu_out: register_t;
+    signal id_is_branch, ex_is_branch: boolean;
 
-    signal branch_op: branch_op_t;
-    signal branch_in1, branch_in2, branch_offset: register_t;
-    signal branch_out: register_t;
-
-    signal rd_data_source: rd_data_source_t;
+    signal rs1_enable, rs2_enable: boolean;
+    signal rs1, rs2, rd: natural range 0 to REGISTERS - 1;
     signal rs1_data, rs2_data, rd_data: register_t;
     signal rd_write_enable: boolean;
 
-    signal dmem_address_source: dmem_address_source_t;
+    signal id_rs1_data, id_rs2_data: register_t;
+
+    signal imem_address: address_t;
+    signal imem_data: instruction_t;
+
     signal dmem_address: address_t;
-    signal dmem_in, dmem_out: data_t;
+    signal dmem_out, dmem_in: data_t;
     signal dmem_write_enable: boolean;
 begin
     program_counter: process (enable, clock)
     begin
         if enable = '0' then
             pc <= ADDRESS_ZERO;
-            default_next_pc <= ADDRESS_ZERO;
         elsif falling_edge(clock) then
-            pc <= next_pc(next_pc'left downto 1) & '0';
-            default_next_pc <= next_pc + INSTRUCTION_WIDTH_BYTES;
+            if id_is_branch then
+                null; -- Stall
+            elsif ex_is_branch then
+                pc <= branch_next_pc(branch_next_pc'left downto 1) & '0';
+            else
+                pc <= next_pc(next_pc'left downto 1) & '0';
+            end if;
         end if;
     end process;
-    with next_pc_source select next_pc <=
-        default_next_pc             when NEXT_PC_DEFAULT,
-        pc + unsigned(branch_out)   when NEXT_PC_BRANCH_OUT,
-        unsigned(alu_out)           when NEXT_PC_ALU_OUT;
+    next_pc <= pc + INSTRUCTION_WIDTH_BYTES;
 
-    decoder: entity work.decoder port map(
-        inst => inst,
-        inst_imm => inst_imm,
+    pipeline_registers: process (enable, clock)
+    begin
+        if enable = '0' then
+            ifid_out <= IFID_ZERO;
+            idex_out <= IDEX_ZERO;
+            exmem_out <= EXMEM_ZERO;
+            memwb_out <= MEMWB_ZERO;
+        elsif falling_edge(clock) then
+            if id_is_branch or ex_is_branch then
+                ifid_out.inst <= INSTRUCTION_NOP;
+            else
+                ifid_out <= ifid_in;
+            end if;
 
-        next_pc_source => next_pc_source,
+            idex_out <= idex_in;
+            exmem_out <= exmem_in;
+            memwb_out <= memwb_in;
+        end if;
+    end process;
 
-        alu_op => alu_op,
-        alu_in1_source => alu_in1_source,
-        alu_in2_source => alu_in2_source,
+    data_forwarding: process (rs1, rs2, rs1_data, rs2_data, idex_out, exmem_in, exmem_out, memwb_in)
+        variable ex_rs1, ex_rs2, mem_rs1, mem_rs2: boolean;
+    begin
+        ex_rs1 := rs1_enable and idex_out.rd_write_enable and idex_out.rd /= 0 and idex_out.rd = rs1;
+        ex_rs2 := rs2_enable and idex_out.rd_write_enable and idex_out.rd /= 0 and idex_out.rd = rs2;
+        mem_rs1 := rs1_enable and exmem_out.rd_write_enable and exmem_out.rd /= 0 and exmem_out.rd = rs1;
+        mem_rs2 := rs2_enable and exmem_out.rd_write_enable and exmem_out.rd /= 0 and exmem_out.rd = rs2;
 
-        branch_op => branch_op,
+        if ex_rs1 then
+            case idex_out.rd_data_source is
+                when RD_DATA_DMEM_OUT =>
+                    -- TODO
+                    assert false report "Unhandled load-use hazard on rs1" severity error;
+                when RD_DATA_ALU_OUT =>
+                    id_rs1_data <= exmem_in.alu_out;
+                when RD_DATA_DEFAULT_NEXT_PC =>
+                    id_rs1_data <= signed(exmem_in.default_next_pc);
+            end case;
+        elsif mem_rs1 then
+            id_rs1_data <= memwb_in.rd_data;
+        else
+            id_rs1_data <= rs1_data;
+        end if;
 
-        rd_data_source => rd_data_source,
-        rd_write_enable => rd_write_enable,
-
-        dmem_address_source => dmem_address_source,
-        dmem_write_enable => dmem_write_enable
-    );
-
-    alu: entity work.alu port map(
-        alu_op => alu_op,
-        alu_in1 => alu_in1,
-        alu_in2 => alu_in2,
-        alu_out => alu_out
-    );
-    with alu_in1_source select alu_in1 <=
-        rs1_data    when ALU_IN1_RS1_DATA,
-        signed(pc)  when ALU_IN1_PC,
-        XLEN_ZERO   when ALU_IN1_ZERO;
-    with alu_in2_source select alu_in2 <=
-        rs2_data    when ALU_IN2_RS2_DATA,
-        inst_imm    when ALU_IN2_IMM;
-
-    branch_unit: entity work.branch_unit port map(
-        branch_op => branch_op,
-        branch_in1 => rs1_data,
-        branch_in2 => rs2_data,
-        branch_offset => branch_offset,
-        branch_out => branch_out
-    );
-    branch_in1 <= rs1_data;
-    branch_in2 <= rs2_data;
-    branch_offset <= inst_imm;
+        if ex_rs2 then
+            case idex_out.rd_data_source is
+                when RD_DATA_DMEM_OUT =>
+                    -- TODO
+                    assert false report "Unhandled load-use hazard on rs2" severity error;
+                when RD_DATA_ALU_OUT =>
+                    id_rs2_data <= exmem_in.alu_out;
+                when RD_DATA_DEFAULT_NEXT_PC =>
+                    id_rs2_data <= signed(exmem_in.default_next_pc);
+            end case;
+        elsif mem_rs2 then
+            id_rs2_data <= memwb_in.rd_data;
+        else
+            id_rs2_data <= rs2_data;
+        end if;
+    end process;
 
     gp_registers: entity work.gp_registers port map(
         enable => enable,
         clock => clock,
 
-        rs1 => instruction_rs1(inst),
-        rs2 => instruction_rs2(inst),
-        rd => instruction_rd(inst),
+        rs1 => rs1,
+        rs2 => rs2,
+        rd => rd,
         write_enable => rd_write_enable,
 
         rs1_data => rs1_data,
         rs2_data => rs2_data,
         rd_data => rd_data
     );
-    with rd_data_source select rd_data <=
-        dmem_out                when RD_DATA_DMEM_OUT,
-        alu_out                 when RD_DATA_ALU_OUT,
-        signed(default_next_pc) when RD_DATA_DEFAULT_NEXT_PC;
 
     imem: entity work.imem port map(
         enable => enable,
         clock => clock,
 
-        address => pc,
-        data => inst
+        address => imem_address,
+        data => imem_data
     );
 
     dmem: entity work.dmem port map(
@@ -135,8 +147,54 @@ begin
         data_in => dmem_in,
         write_enable => dmem_write_enable
     );
-    dmem_in <= rs2_data;
-    with dmem_address_source select dmem_address <=
-        unsigned(alu_out)   when DMEM_ADDRESS_ALU_OUT,
-        ADDRESS_ZERO        when DMEM_ADDRESS_NONE;
+
+    pipeline_instruction_fetch: entity work.pipeline_instruction_fetch port map(
+        pc => pc,
+        default_next_pc => next_pc,
+
+        imem_address => imem_address,
+        imem_data => imem_data,
+
+        next_stage => ifid_in
+    );
+
+    pipeline_instruction_decode: entity work.pipeline_instruction_decode port map(
+        is_branch => id_is_branch,
+
+        rs1_enable => rs1_enable,
+        rs2_enable => rs2_enable,
+        rs1 => rs1,
+        rs2 => rs2,
+        rs1_data => id_rs1_data,
+        rs2_data => id_rs2_data,
+
+        prev_stage => ifid_out,
+        next_stage => idex_in
+    );
+
+    pipeline_execute: entity work.pipeline_execute port map(
+        next_pc => branch_next_pc,
+        is_branch => ex_is_branch,
+
+        prev_stage => idex_out,
+        next_stage => exmem_in
+    );
+
+    pipeline_memory_access: entity work.pipeline_memory_access port map(
+        dmem_address => dmem_address,
+        dmem_out => dmem_out,
+        dmem_in => dmem_in,
+        dmem_write_enable => dmem_write_enable,
+
+        prev_stage => exmem_out,
+        next_stage => memwb_in
+    );
+
+    pipeline_writeback: entity work.pipeline_writeback port map(
+        rd => rd,
+        rd_data => rd_data,
+        rd_write_enable => rd_write_enable,
+
+        prev_stage => memwb_out
+    );
 end arch;

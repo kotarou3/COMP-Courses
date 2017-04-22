@@ -1,4 +1,5 @@
 vcom -2008 ../../src/constants.vhd ../../src/instructions.vhd
+vcom -2008 ../../src/components/*.vhd ../../src/pipeline/*.vhd
 vcom -2008 ../../src/*.vhd
 vcom -2008 ../processor-testbench.vhw
 vsim processor_testbench
@@ -7,20 +8,22 @@ add wave -noupdate -format Logic -radix hexadecimal /processor_testbench/enable
 add wave -noupdate -format Logic -radix hexadecimal /processor_testbench/clock
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/pc
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/next_pc
-add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/inst
-add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/next_pc_source
-add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/alu_in1_source
-add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/alu_in2_source
-add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/rd_data_source
-add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/dmem_address_source
-add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/alu_op
-add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/branch_op
+add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/id_is_branch
+add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/ex_is_branch
+add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/rs1_data
+add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/id_rs1_data
+add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/rs2_data
+add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/id_rs2_data
+add wave -noupdate -format Literal -radix hexadecimal -expand /processor_testbench/uut/ifid_out
+add wave -noupdate -format Literal -radix hexadecimal -expand /processor_testbench/uut/idex_out
+add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/exmem_out
+add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/memwb_out
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/gp_registers/rs1
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/gp_registers/rs2
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/gp_registers/rd
-add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/rd_write_enable
-add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/dmem_address
-add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/dmem_write_enable
+add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/gp_registers/write_enable
+add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/dmem/address
+add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/dmem/write_enable
 add wave -noupdate -format Literal -radix hexadecimal -expand /processor_testbench/uut/gp_registers/registers
 #add wave -noupdate -format Literal -radix hexadecimal -expand /processor_testbench/uut/imem/memory
 #add wave -noupdate -format Literal -radix hexadecimal -expand /processor_testbench/uut/dmem/memory

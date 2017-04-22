@@ -17,6 +17,9 @@ entity decoder is
         alu_in1_source: out alu_in1_source_t;
         alu_in2_source: out alu_in2_source_t;
 
+        rs1_enable, rs2_enable: out boolean;
+
+        is_branch: out boolean;
         branch_op: out branch_op_t;
 
         rd_data_source: out rd_data_source_t;
@@ -31,13 +34,42 @@ architecture arch of decoder is
     type inst_type_t is (INST_TYPE_R, INST_TYPE_I, INST_TYPE_S, INST_TYPE_SB, INST_TYPE_U, INST_TYPE_UJ);
     signal inst_type: inst_type_t;
 begin
-    with inst_type select inst_imm <=
-        XLEN_ZERO                   when INST_TYPE_R,
-        instruction_i_imm(inst)     when INST_TYPE_I,
-        instruction_s_imm(inst)     when INST_TYPE_S,
-        instruction_sb_imm(inst)    when INST_TYPE_SB,
-        instruction_u_imm(inst)     when INST_TYPE_U,
-        instruction_uj_imm(inst)    when INST_TYPE_UJ;
+    process (inst, inst_type)
+    begin
+        case inst_type is
+            when INST_TYPE_R =>
+                inst_imm <= XLEN_ZERO;
+                rs1_enable <= true;
+                rs2_enable <= true;
+
+            when INST_TYPE_I =>
+                inst_imm <= instruction_i_imm(inst);
+                rs1_enable <= true;
+                rs2_enable <= false;
+
+            when INST_TYPE_S =>
+                inst_imm <= instruction_s_imm(inst);
+                rs1_enable <= true;
+                rs2_enable <= true;
+
+            when INST_TYPE_SB =>
+                inst_imm <= instruction_sb_imm(inst);
+                rs1_enable <= true;
+                rs2_enable <= true;
+
+            when INST_TYPE_U =>
+                inst_imm <= instruction_u_imm(inst);
+                rs1_enable <= false;
+                rs2_enable <= false;
+
+            when INST_TYPE_UJ =>
+                inst_imm <= instruction_uj_imm(inst);
+                rs1_enable <= false;
+                rs2_enable <= false;
+        end case;
+    end process;
+
+    is_branch <= next_pc_source /= NEXT_PC_DEFAULT;
 
     process (inst)
     begin

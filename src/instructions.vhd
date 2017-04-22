@@ -6,6 +6,8 @@ library work;
 use work.constants.all;
 
 package instructions is
+    constant INSTRUCTION_NOP: instruction_t := x"00000013";
+
     subtype opcode_t is std_ulogic_vector(6 downto 0);
     constant OP_LOAD:   opcode_t := "0000011";
     constant OP_OP_IMM: opcode_t := "0010011";
