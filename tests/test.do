@@ -7,7 +7,9 @@ add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/p
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/next_pc
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/inst
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/next_pc_source
+add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/alu_in1_source
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/alu_in2_source
+add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/branch_offset_source
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/rd_data_source
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/dmem_address_source
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/alu_op

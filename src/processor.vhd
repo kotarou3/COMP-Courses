@@ -18,15 +18,17 @@ architecture arch of processor is
     signal pc_offset: register_t;
     signal inst: instruction_t;
 
-    signal decoder_next_pc: address_t;
-    signal decoder_rd_data: register_t;
-
-    type next_pc_source_t is (NEXT_PC_DECODER, NEXT_PC_BRANCH, NEXT_PC_DEFAULT);
-    type alu_in2_source_t is (ALU_IN2_RS2_DATA, ALU_IN2_I_IMM, ALU_IN2_S_IMM);
-    type rd_data_source_t is (RD_DATA_DMEM_OUT, RD_DATA_ALU_OUT, RD_DATA_DECODER);
+    type next_pc_source_t is (NEXT_PC_DEFAULT, NEXT_PC_BRANCH_OUT, NEXT_PC_ALU_OUT);
+    type alu_in1_source_t is (ALU_IN1_RS1_DATA, ALU_IN1_PC, ALU_IN1_ZERO);
+    type alu_in2_source_t is (ALU_IN2_RS2_DATA, ALU_IN2_I_IMM, ALU_IN2_S_IMM, ALU_IN2_U_IMM);
+    type branch_offset_source_t is (BRANCH_OFFSET_SB_IMM, BRANCH_OFFSET_UJ_IMM);
+    type rd_data_source_t is (RD_DATA_DMEM_OUT, RD_DATA_ALU_OUT, RD_DATA_DEFAULT_NEXT_PC);
     type dmem_address_source_t is (DMEM_ADDRESS_ALU_OUT, DMEM_ADDRESS_NONE);
+
     signal next_pc_source: next_pc_source_t;
+    signal alu_in1_source: alu_in1_source_t;
     signal alu_in2_source: alu_in2_source_t;
+    signal branch_offset_source: branch_offset_source_t;
     signal rd_data_source: rd_data_source_t;
     signal dmem_address_source: dmem_address_source_t;
 
@@ -57,20 +59,24 @@ begin
     end process;
 
     with rd_data_source select rd_data <=
-        dmem_out        when RD_DATA_DMEM_OUT,
-        alu_out         when RD_DATA_ALU_OUT,
-        decoder_rd_data when RD_DATA_DECODER;
+        dmem_out                when RD_DATA_DMEM_OUT,
+        alu_out                 when RD_DATA_ALU_OUT,
+        signed(default_next_pc) when RD_DATA_DEFAULT_NEXT_PC;
 
     with next_pc_source select next_pc <=
-        decoder_next_pc             when NEXT_PC_DECODER,
-        pc + unsigned(branch_out)   when NEXT_PC_BRANCH,
-        default_next_pc             when NEXT_PC_DEFAULT;
+        default_next_pc             when NEXT_PC_DEFAULT,
+        pc + unsigned(branch_out)   when NEXT_PC_BRANCH_OUT,
+        unsigned(alu_out)           when NEXT_PC_ALU_OUT;
 
-    alu_in1 <= rs1_data;
+    with alu_in1_source select alu_in1 <=
+        rs1_data    when ALU_IN1_RS1_DATA,
+        signed(pc)  when ALU_IN1_PC,
+        XLEN_ZERO   when ALU_IN1_ZERO;
     with alu_in2_source select alu_in2 <=
         rs2_data                when ALU_IN2_RS2_DATA,
         instruction_i_imm(inst) when ALU_IN2_I_IMM,
-        instruction_s_imm(inst) when ALU_IN2_S_IMM;
+        instruction_s_imm(inst) when ALU_IN2_S_IMM,
+        instruction_u_imm(inst) when ALU_IN2_U_IMM;
 
     dmem_in <= rs2_data;
     with dmem_address_source select dmem_address <=
@@ -79,30 +85,40 @@ begin
 
     branch_in1 <= rs1_data;
     branch_in2 <= rs2_data;
-    branch_offset <= instruction_sb_imm(inst);
+    with branch_offset_source select branch_offset <=
+        instruction_sb_imm(inst)    when BRANCH_OFFSET_SB_IMM,
+        instruction_uj_imm(inst)    when BRANCH_OFFSET_UJ_IMM;
 
-    decoder: process (inst, rs1_data)
+    decoder: process (inst)
     begin
         -- Defaults to prevent latches
         next_pc_source <= NEXT_PC_DEFAULT;
+        alu_in1_source <= ALU_IN1_RS1_DATA;
         alu_in2_source <= ALU_IN2_RS2_DATA;
+        branch_offset_source <= BRANCH_OFFSET_SB_IMM;
         rd_data_source <= RD_DATA_ALU_OUT;
         dmem_address_source <= DMEM_ADDRESS_NONE;
+
         rd_write_enable <= false;
         dmem_write_enable <= false;
 
+        alu_op <= ALU_ADD;
+        branch_op <= BRANCH_JUMP;
+
         case instruction_opcode(inst) is
             when OP_LOAD =>
-                assert instruction_funct(inst) = FUNCT_LD report "Invalid instruction" severity error;
+                assert instruction_funct(inst) ?= FUNCT_LD report "Invalid instruction" severity error;
                 alu_op <= ALU_ADD;
+                alu_in1_source <= ALU_IN1_RS1_DATA;
                 alu_in2_source <= ALU_IN2_I_IMM;
                 dmem_address_source <= DMEM_ADDRESS_ALU_OUT;
                 rd_data_source <= RD_DATA_DMEM_OUT;
                 rd_write_enable <= true;
 
             when OP_STORE =>
-                assert instruction_funct(inst) = FUNCT_SD report "Invalid instruction" severity error;
+                assert instruction_funct(inst) ?= FUNCT_SD report "Invalid instruction" severity error;
                 alu_op <= ALU_ADD;
+                alu_in1_source <= ALU_IN1_RS1_DATA;
                 alu_in2_source <= ALU_IN2_S_IMM;
                 dmem_address_source <= DMEM_ADDRESS_ALU_OUT;
                 dmem_write_enable <= true;
@@ -131,18 +147,23 @@ begin
                         assert false report "Invalid instruction" severity error;
                 end case?;
 
+                alu_in1_source <= ALU_IN1_RS1_DATA;
                 alu_in2_source <= ALU_IN2_I_IMM;
                 rd_data_source <= RD_DATA_ALU_OUT;
                 rd_write_enable <= true;
 
             when OP_LUI =>
-                decoder_rd_data <= instruction_u_imm(inst);
-                rd_data_source <= RD_DATA_DECODER;
+                alu_op <= ALU_ADD;
+                alu_in1_source <= ALU_IN1_ZERO;
+                alu_in2_source <= ALU_IN2_U_IMM;
+                rd_data_source <= RD_DATA_ALU_OUT;
                 rd_write_enable <= true;
 
             when OP_AUIPC =>
-                decoder_rd_data <= signed(pc) + instruction_u_imm(inst);
-                rd_data_source <= RD_DATA_DECODER;
+                alu_op <= ALU_ADD;
+                alu_in1_source <= ALU_IN1_PC;
+                alu_in2_source <= ALU_IN2_U_IMM;
+                rd_data_source <= RD_DATA_ALU_OUT;
                 rd_write_enable <= true;
 
             when OP_OP =>
@@ -171,24 +192,27 @@ begin
                         assert false report "Invalid instruction" severity error;
                 end case?;
 
+                alu_in1_source <= ALU_IN1_RS1_DATA;
                 alu_in2_source <= ALU_IN2_RS2_DATA;
                 rd_data_source <= RD_DATA_ALU_OUT;
                 rd_write_enable <= true;
 
             when OP_JAL =>
-                decoder_rd_data <= signed(default_next_pc);
-                decoder_next_pc <= unsigned(signed(pc) + instruction_uj_imm(inst));
-                rd_data_source <= RD_DATA_DECODER;
+                branch_op <= BRANCH_JUMP;
+                branch_offset_source <= BRANCH_OFFSET_UJ_IMM;
+                next_pc_source <= NEXT_PC_BRANCH_OUT;
+
+                rd_data_source <= RD_DATA_DEFAULT_NEXT_PC;
                 rd_write_enable <= true;
-                next_pc_source <= NEXT_PC_DECODER;
 
             when OP_JALR =>
-                assert instruction_funct(inst) = FUNCT_JALR report "Invalid instruction" severity error;
-                decoder_rd_data <= signed(default_next_pc);
-                decoder_next_pc <= unsigned(rs1_data + instruction_i_imm(inst));
-                rd_data_source <= RD_DATA_DECODER;
+                alu_op <= ALU_ADD;
+                alu_in1_source <= ALU_IN1_RS1_DATA;
+                alu_in2_source <= ALU_IN2_I_IMM;
+                next_pc_source <= NEXT_PC_ALU_OUT;
+
+                rd_data_source <= RD_DATA_DEFAULT_NEXT_PC;
                 rd_write_enable <= true;
-                next_pc_source <= NEXT_PC_DECODER;
 
             when OP_BRANCH =>
                 case? instruction_funct(inst) is
@@ -207,7 +231,8 @@ begin
                     when others =>
                         assert false report "Invalid instruction" severity error;
                 end case?;
-                next_pc_source <= NEXT_PC_BRANCH;
+                branch_offset_source <= BRANCH_OFFSET_SB_IMM;
+                next_pc_source <= NEXT_PC_BRANCH_OUT;
 
             when others =>
                 assert false report "Invalid instruction" severity error;
@@ -253,6 +278,8 @@ begin
         variable take_branch: boolean;
     begin
         case branch_op is
+            when BRANCH_JUMP =>
+                take_branch := true;
             when BRANCH_EQ =>
                 take_branch := branch_in1 = branch_in2;
             when BRANCH_NE =>

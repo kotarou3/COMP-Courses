@@ -33,6 +33,7 @@ package constants is
     );
 
     type branch_op_t is (
+        BRANCH_JUMP,
         BRANCH_EQ, BRANCH_NE,
         BRANCH_LT, BRANCH_GE,
         BRANCH_LTU, BRANCH_GEU
