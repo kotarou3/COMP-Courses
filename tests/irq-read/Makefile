@@ -3,7 +3,7 @@ include ../Makefile.inc
 all: imem.hex dmem.hex test
 
 test: imem.hex dmem.hex
-	$(MODELSIM) -c -do ../general-test.do <&-
+	$(MODELSIM) -c -do ../irq-test.do <&-
 
 clean:
 	rm -f main *.o imem.hex dmem.hex dmem_out.hex transcript vsim.wlf

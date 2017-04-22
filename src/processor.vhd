@@ -4,16 +4,24 @@ use ieee.std_logic_1164.all;
 
 library work;
 use work.constants.all;
-use work.instructions.all;
 
 entity processor is
     port (
         enable: in std_ulogic;
-        clock: in std_ulogic
+        clock: in std_ulogic;
+
+        irq: in std_ulogic;
+        irq_data: in register_t;
+        irq_acked: out std_ulogic
     );
 end processor;
 
 architecture arch of processor is
+    type irq_stage_t is (IRQ_NONE, IRQ_DETECTED, IRQ_HANDLING);
+    signal irq_stage: irq_stage_t;
+    signal irq_handler: address_t;
+    signal irq_ack: boolean;
+
     signal pc, next_pc: address_t;
     signal branch_next_pc: address_t;
 
@@ -38,41 +46,60 @@ architecture arch of processor is
     signal dmem_out, dmem_in: data_t;
     signal dmem_write_enable: boolean;
 begin
-    program_counter: process (enable, clock)
-    begin
-        if enable = '0' then
-            pc <= ADDRESS_ZERO;
-        elsif falling_edge(clock) then
-            if id_is_branch then
-                null; -- Stall
-            elsif ex_is_branch then
-                pc <= branch_next_pc(branch_next_pc'left downto 1) & '0';
-            else
-                pc <= next_pc(next_pc'left downto 1) & '0';
-            end if;
-        end if;
-    end process;
-    next_pc <= pc + INSTRUCTION_WIDTH_BYTES;
+    irq_acked <= '1' when irq_stage = IRQ_NONE else '0';
 
-    pipeline_registers: process (enable, clock)
+    process (enable, clock, irq, irq_ack)
     begin
         if enable = '0' then
+            irq_stage <= IRQ_NONE;
+
+            pc <= ADDRESS_ZERO;
+
             ifid_out <= IFID_ZERO;
             idex_out <= IDEX_ZERO;
             exmem_out <= EXMEM_ZERO;
             memwb_out <= MEMWB_ZERO;
+        elsif rising_edge(irq) and irq_stage = IRQ_NONE then
+            irq_stage <= IRQ_DETECTED;
         elsif falling_edge(clock) then
-            if id_is_branch or ex_is_branch then
-                ifid_out.inst <= INSTRUCTION_NOP;
-            else
-                ifid_out <= ifid_in;
-            end if;
+            if irq_stage = IRQ_DETECTED then
+                pc <= irq_handler;
+                irq_stage <= IRQ_HANDLING;
 
-            idex_out <= idex_in;
-            exmem_out <= exmem_in;
-            memwb_out <= memwb_in;
+                -- Flush entire pipeline
+                ifid_out <= IFID_ZERO;
+                idex_out <= IDEX_ZERO;
+                exmem_out <= EXMEM_ZERO;
+
+                -- Hijack last stage to write IRQ data to the a0 (x10) register
+                memwb_out <= (
+                    rd => 10,
+                    rd_data => irq_data,
+                    rd_write_enable => true
+                );
+            else
+                if id_is_branch then
+                    null; -- Stall
+                elsif ex_is_branch then
+                    pc <= branch_next_pc(branch_next_pc'left downto 1) & '0';
+                else
+                    pc <= next_pc(next_pc'left downto 1) & '0';
+                end if;
+
+                if id_is_branch or ex_is_branch then
+                    ifid_out <= IFID_ZERO;
+                else
+                    ifid_out <= ifid_in;
+                end if;
+                idex_out <= idex_in;
+                exmem_out <= exmem_in;
+                memwb_out <= memwb_in;
+            end if;
+        elsif rising_edge(irq_ack) then
+            irq_stage <= IRQ_NONE;
         end if;
     end process;
+    next_pc <= pc + INSTRUCTION_WIDTH_BYTES;
 
     data_forwarding: process (rs1, rs2, rs1_data, rs2_data, idex_out, exmem_in, exmem_out, memwb_in)
         variable ex_rs1, ex_rs2, mem_rs1, mem_rs2: boolean;
@@ -145,7 +172,10 @@ begin
         data_out => dmem_out,
 
         data_in => dmem_in,
-        write_enable => dmem_write_enable
+        write_enable => dmem_write_enable,
+
+        irq_handler => irq_handler,
+        irq_ack => irq_ack
     );
 
     pipeline_instruction_fetch: entity work.pipeline_instruction_fetch port map(

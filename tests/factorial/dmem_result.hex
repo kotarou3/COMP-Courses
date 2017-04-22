@@ -1,5 +1,5 @@
 // memory data file (do not edit the following line - required for mem load use)
-// instance=/processor_testbench/uut/dmem/memory
+// instance=/test/uut/dmem/memory
 // format=hex addressradix=h dataradix=h version=1.0 wordsperline=4
 @400 0000000000000001 0000000000000001 0000000000000002 0000000000000006
 @404 0000000000000018 0000000000000078 00000000000002D0 00000000000013B0

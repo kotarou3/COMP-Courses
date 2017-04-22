@@ -28,7 +28,7 @@ begin
     begin
         if enable = '0' then
             registers <= (others => (others => '0'));
-        elsif falling_edge(clock) then
+        elsif rising_edge(clock) then
             if rd /= 0 and write_enable then
                 registers(rd) <= rd_data;
             end if;

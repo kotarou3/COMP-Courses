@@ -1,21 +1,24 @@
 library ieee;
 use ieee.std_logic_1164.all;
-use std.textio.all;
 
-entity processor_testbench is
-end processor_testbench;
+entity test is
+end test;
 
-architecture testbench_arch of processor_testbench is
+architecture arch of test is
     signal enable: std_ulogic := '0';
     signal clock: std_ulogic := '0';
-
+    
     constant period: time := 200 ns;
     constant duty_cycle: real := 0.5;
     constant offset: time := 0 ns;
 begin
     uut: entity work.processor port map(
         enable => enable,
-        clock => clock
+        clock => clock,
+        
+        irq => '0',
+        irq_data => (others => '0'),
+        irq_acked => open
     );
 
     process
@@ -29,4 +32,4 @@ begin
             wait for (period * duty_cycle);
         end loop;
     end process;
-end testbench_arch;
+end arch;

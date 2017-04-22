@@ -21,6 +21,8 @@ package constants is
     subtype instruction_t is std_ulogic_vector(INSTRUCTION_WIDTH - 1 downto 0);
     subtype data_t is signed(DATA_WIDTH - 1 downto 0);
 
+    constant INSTRUCTION_NOP: instruction_t := x"00000013";
+
     constant XLEN_ZERO: register_t := (others => '0');
     constant XLEN_ONE: register_t := (0 => '1', others => '0');
     constant ADDRESS_ZERO: address_t := (others => '0');
@@ -112,7 +114,7 @@ package constants is
 
     constant IFID_ZERO: ifid_t := (
         pc => ADDRESS_ZERO, default_next_pc => ADDRESS_ZERO,
-        inst => (others => '0')
+        inst => INSTRUCTION_NOP
     );
     constant IDEX_ZERO: idex_t := (
         pc => ADDRESS_ZERO, default_next_pc => ADDRESS_ZERO,
