@@ -12,7 +12,7 @@ package constants is
     constant INSTRUCTION_WIDTH_BYTES: positive := INSTRUCTION_WIDTH / BYTE_WIDTH;
     constant IMEM_SIZE: positive := IMEM_SIZE_BYTES / INSTRUCTION_WIDTH_BYTES;
     constant DATA_WIDTH: positive := XLEN;
-    constant DMEM_SIZE_BYTES: positive := 4096;
+    constant DMEM_SIZE_BYTES: positive := 3 * 4096;
     constant DATA_WIDTH_BYTES: positive := DATA_WIDTH / BYTE_WIDTH;
     constant DMEM_SIZE: positive := DMEM_SIZE_BYTES / DATA_WIDTH_BYTES;
 
@@ -23,6 +23,7 @@ package constants is
 
     constant XLEN_ZERO: register_t := (others => '0');
     constant XLEN_ONE: register_t := (0 => '1', others => '0');
+    constant ADDRESS_ZERO: address_t := (others => '0');
 
     type alu_op_t is (
         ALU_ADD, ALU_SUB,

@@ -48,8 +48,8 @@ begin
     program_counter: process (enable, clock)
     begin
         if enable = '0' then
-            pc <= (others => '0');
-            default_next_pc <= (others => '0');
+            pc <= ADDRESS_ZERO;
+            default_next_pc <= ADDRESS_ZERO;
         elsif falling_edge(clock) then
             pc <= next_pc(next_pc'left downto 1) & '0';
             default_next_pc <= next_pc + INSTRUCTION_WIDTH_BYTES;
@@ -62,9 +62,9 @@ begin
         decoder_rd_data when RD_DATA_DECODER;
 
     with next_pc_source select next_pc <=
-        decoder_next_pc                         when NEXT_PC_DECODER,
-        default_next_pc + unsigned(branch_out)  when NEXT_PC_BRANCH,
-        default_next_pc                         when NEXT_PC_DEFAULT;
+        decoder_next_pc             when NEXT_PC_DECODER,
+        pc + unsigned(branch_out)   when NEXT_PC_BRANCH,
+        default_next_pc             when NEXT_PC_DEFAULT;
 
     alu_in1 <= rs1_data;
     with alu_in2_source select alu_in2 <=
@@ -75,7 +75,7 @@ begin
     dmem_in <= rs2_data;
     with dmem_address_source select dmem_address <=
         unsigned(alu_out)   when DMEM_ADDRESS_ALU_OUT,
-        (others => '0')     when DMEM_ADDRESS_NONE;
+        ADDRESS_ZERO        when DMEM_ADDRESS_NONE;
 
     branch_in1 <= rs1_data;
     branch_in2 <= rs2_data;
@@ -108,7 +108,7 @@ begin
                 dmem_write_enable <= true;
 
             when OP_OP_IMM =>
-                case instruction_funct(inst) is
+                case? instruction_funct(inst) is
                     when FUNCT_ADDI =>
                         alu_op <= ALU_ADD;
                     when FUNCT_SLTI =>
@@ -129,7 +129,7 @@ begin
                         alu_op <= ALU_SRA;
                     when others =>
                         assert false report "Invalid instruction" severity error;
-                end case;
+                end case?;
 
                 alu_in2_source <= ALU_IN2_I_IMM;
                 rd_data_source <= RD_DATA_ALU_OUT;
@@ -146,7 +146,7 @@ begin
                 rd_write_enable <= true;
 
             when OP_OP =>
-                case instruction_funct(inst) is
+                case? instruction_funct(inst) is
                     when FUNCT_ADD =>
                         alu_op <= ALU_ADD;
                     when FUNCT_SUB =>
@@ -169,7 +169,7 @@ begin
                         alu_op <= ALU_AND;
                     when others =>
                         assert false report "Invalid instruction" severity error;
-                end case;
+                end case?;
 
                 alu_in2_source <= ALU_IN2_RS2_DATA;
                 rd_data_source <= RD_DATA_ALU_OUT;
@@ -177,7 +177,7 @@ begin
 
             when OP_JAL =>
                 decoder_rd_data <= signed(default_next_pc);
-                decoder_next_pc <= unsigned(signed(default_next_pc) + instruction_uj_imm(inst));
+                decoder_next_pc <= unsigned(signed(pc) + instruction_uj_imm(inst));
                 rd_data_source <= RD_DATA_DECODER;
                 rd_write_enable <= true;
                 next_pc_source <= NEXT_PC_DECODER;
@@ -191,7 +191,7 @@ begin
                 next_pc_source <= NEXT_PC_DECODER;
 
             when OP_BRANCH =>
-                case instruction_funct(inst) is
+                case? instruction_funct(inst) is
                     when FUNCT_BEQ =>
                         branch_op <= BRANCH_EQ;
                     when FUNCT_BNE =>
@@ -206,7 +206,7 @@ begin
                         branch_op <= BRANCH_GEU;
                     when others =>
                         assert false report "Invalid instruction" severity error;
-                end case;
+                end case?;
                 next_pc_source <= NEXT_PC_BRANCH;
 
             when others =>
@@ -267,7 +267,7 @@ begin
                 take_branch := unsigned(branch_in1) >= unsigned(branch_in2);
         end case;
 
-        branch_out <= branch_offset when take_branch else XLEN_ZERO;
+        branch_out <= branch_offset when take_branch else XLEN_ZERO + INSTRUCTION_WIDTH_BYTES;
     end process;
 
     gp_registers: entity work.gp_registers port map(

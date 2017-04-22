@@ -89,7 +89,7 @@ package body instructions is
 
     function instruction_sb_imm(instruction: instruction_t) return register_t is
     begin
-        return resize(signed(instruction(12) & instruction(7) & instruction(30 downto 25) & instruction(11 downto 8) & '0'), XLEN);
+        return resize(signed(instruction(31) & instruction(7) & instruction(30 downto 25) & instruction(11 downto 8) & '0'), XLEN);
     end function;
 
     function instruction_u_imm(instruction: instruction_t) return register_t is

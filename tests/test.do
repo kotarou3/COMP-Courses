@@ -10,6 +10,8 @@ add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/n
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/alu_in2_source
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/rd_data_source
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/dmem_address_source
+add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/alu_op
+add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/branch_op
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/gp_registers/rs1
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/gp_registers/rs2
 add wave -noupdate -format Literal -radix hexadecimal /processor_testbench/uut/gp_registers/rd
@@ -25,8 +27,8 @@ WaveRestoreZoom {0 ps} {3 us}
 mem load -filldata 0 -infile imem.hex -format hex /processor_testbench/uut/imem/memory
 mem load -filldata 0 -infile dmem.hex -format hex /processor_testbench/uut/dmem/memory
 
-run 20us
+run -all
 
-mem save -outfile dmem_out.hex -format hex /processor_testbench/uut/dmem/memory
+mem save -outfile dmem_out.hex -format hex /processor_testbench/uut/dmem/memory -startaddress 1024
 exec diff -wu dmem_result.hex dmem_out.hex
 echo "Test successful"

@@ -1,4 +1,8 @@
-tests/*/*_out.hex
+tests/*/main
+tests/*/main.o
+tests/*/imem.hex
+tests/*/dmem.hex
+tests/*/dmem_out.hex
 
 transcript
 vsim.wlf

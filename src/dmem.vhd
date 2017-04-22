@@ -22,7 +22,7 @@ architecture arch of dmem is
     type memory_t is array(0 to DMEM_SIZE - 1) of data_t;
     signal memory: memory_t := (others => (others => '0'));
 begin
-    data_out <= memory(to_integer(address) / DATA_WIDTH_BYTES);
+    data_out <= memory(to_integer(address) / DATA_WIDTH_BYTES) when address < DMEM_SIZE_BYTES else (others => 'X');
 
     process (enable, clock)
     begin
@@ -34,6 +34,9 @@ begin
             assert address mod DATA_WIDTH_BYTES = 0 report "Unaligned dmem access" severity error;
 
             if write_enable then
+                -- Used to exit the simulation
+                assert address /= ADDRESS_ZERO report "Write to null" severity failure;
+
                 memory(to_integer(address) / DATA_WIDTH_BYTES) <= data_in;
             end if;
         end if;
