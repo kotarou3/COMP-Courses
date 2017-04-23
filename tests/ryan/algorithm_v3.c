@@ -24,7 +24,7 @@ void readHaystack(uint64_t data) {
     }
 
     uint64_t tmp = needleSize - 1;
-    results += (bitArray >> tmp & 1); // if (bitArray[needleSize - 1] == 1) results++
+    results += ((bitArray >> tmp) & 1); // if (bitArray[needleSize - 1] == 1) results++
 
     bitArray <<= 1;
 
