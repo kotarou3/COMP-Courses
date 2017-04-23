@@ -25,6 +25,8 @@ architecture arch of processor is
     signal pc, next_pc: address_t;
     signal branch_next_pc: address_t;
 
+    signal id_stall: boolean;
+
     signal ifid_in, ifid_out: ifid_t;
     signal idex_in, idex_out: idex_t;
     signal exmem_in, exmem_out: exmem_t;
@@ -49,7 +51,10 @@ begin
     irq_acked <= '1' when irq_stage = IRQ_NONE else '0';
 
     process (enable, clock, irq, irq_ack)
+        variable if_stall: boolean;
     begin
+        if_stall := false;
+
         if enable = '0' then
             irq_stage <= IRQ_NONE;
 
@@ -78,20 +83,29 @@ begin
                     rd_write_enable => true
                 );
             else
-                if id_is_branch then
-                    null; -- Stall
+                if id_is_branch or id_stall then
+                    if_stall := true;
                 elsif ex_is_branch then
+                    if_stall := true;
                     pc <= branch_next_pc(branch_next_pc'left downto 1) & '0';
                 else
                     pc <= next_pc(next_pc'left downto 1) & '0';
                 end if;
 
-                if id_is_branch or ex_is_branch then
+                if id_stall then
+                    ifid_out <= ifid_out;
+                elsif if_stall then
                     ifid_out <= IFID_ZERO;
                 else
                     ifid_out <= ifid_in;
                 end if;
-                idex_out <= idex_in;
+
+                if id_stall then
+                    idex_out <= IDEX_ZERO;
+                else
+                    idex_out <= idex_in;
+                end if;
+
                 exmem_out <= exmem_in;
                 memwb_out <= memwb_in;
             end if;
@@ -109,11 +123,12 @@ begin
         mem_rs1 := rs1_enable and exmem_out.rd_write_enable and exmem_out.rd /= 0 and exmem_out.rd = rs1;
         mem_rs2 := rs2_enable and exmem_out.rd_write_enable and exmem_out.rd /= 0 and exmem_out.rd = rs2;
 
+        id_stall <= false;
+
         if ex_rs1 then
             case idex_out.rd_data_source is
                 when RD_DATA_DMEM_OUT =>
-                    -- TODO
-                    assert false report "Unhandled load-use hazard on rs1" severity error;
+                    id_stall <= true;
                 when RD_DATA_ALU_OUT =>
                     id_rs1_data <= exmem_in.alu_out;
                 when RD_DATA_DEFAULT_NEXT_PC =>
@@ -128,8 +143,7 @@ begin
         if ex_rs2 then
             case idex_out.rd_data_source is
                 when RD_DATA_DMEM_OUT =>
-                    -- TODO
-                    assert false report "Unhandled load-use hazard on rs2" severity error;
+                    id_stall <= true;
                 when RD_DATA_ALU_OUT =>
                     id_rs2_data <= exmem_in.alu_out;
                 when RD_DATA_DEFAULT_NEXT_PC =>
