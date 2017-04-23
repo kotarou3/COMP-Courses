@@ -16,7 +16,7 @@ end branch_unit;
 
 architecture arch of branch_unit is
 begin
-    process (branch_op, branch_in1, branch_in2, branch_offset) is
+    process (all) is
         variable take_branch: boolean;
     begin
         case branch_op is

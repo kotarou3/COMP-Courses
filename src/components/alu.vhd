@@ -16,7 +16,7 @@ end alu;
 
 architecture arch of alu is
 begin
-    process (alu_op, alu_in1, alu_in2)
+    process (all)
     begin
         case alu_op is
             when ALU_ADD =>

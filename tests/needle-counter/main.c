@@ -33,7 +33,7 @@ void readHaystack(uint64_t data) {
         rollingHaystack[haystackSize - 1] = data;
     }
 
-    if (checkMatch())
+    if (haystackSize == needleSize && checkMatch())
         ++results;
 
     ackIrq();

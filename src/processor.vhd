@@ -115,7 +115,7 @@ begin
     end process;
     next_pc <= pc + INSTRUCTION_WIDTH_BYTES;
 
-    data_forwarding: process (rs1, rs2, rs1_data, rs2_data, idex_out, exmem_in, exmem_out, memwb_in)
+    data_forwarding: process (all)
         variable ex_rs1, ex_rs2, mem_rs1, mem_rs2: boolean;
     begin
         ex_rs1 := rs1_enable and idex_out.rd_write_enable and idex_out.rd /= 0 and idex_out.rd = rs1;

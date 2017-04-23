@@ -34,7 +34,7 @@ architecture arch of decoder is
     type inst_type_t is (INST_TYPE_R, INST_TYPE_I, INST_TYPE_S, INST_TYPE_SB, INST_TYPE_U, INST_TYPE_UJ);
     signal inst_type: inst_type_t;
 begin
-    process (inst, inst_type)
+    process (all)
     begin
         case inst_type is
             when INST_TYPE_R =>
@@ -71,7 +71,7 @@ begin
 
     is_branch <= next_pc_source /= NEXT_PC_DEFAULT;
 
-    process (inst)
+    process (all)
     begin
         -- Defaults to prevent latches
         next_pc_source <= NEXT_PC_DEFAULT;
