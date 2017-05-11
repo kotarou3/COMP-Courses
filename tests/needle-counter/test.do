@@ -12,7 +12,7 @@ add wave -noupdate -format Literal -radix hexadecimal /test/uut/dmem/memory(1024
 WaveRestoreCursors {{Cursor 1} {0 ps} 0}
 WaveRestoreZoom {0 ps} {50 us}
 
-mem load -filldata 0 -infile imem.hex -format hex /test/uut/imem/memory
+mem load -filldata 0 -infile imem.hex -format hex /test/uut/core/imem/memory
 mem load -filldata 0 -infile dmem.hex -format hex /test/uut/dmem/memory
 
 run -all

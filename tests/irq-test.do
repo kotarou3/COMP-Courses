@@ -10,7 +10,7 @@ add wave -noupdate -format Logic -radix hexadecimal /test/irq_acked
 do ../general-signals.do
 
 mem load -filldata 0 -infile irq-buffer.hex -format hex /test/irq_buffer
-mem load -filldata 0 -infile imem.hex -format hex /test/uut/imem/memory
+mem load -filldata 0 -infile imem.hex -format hex /test/uut/core/imem/memory
 mem load -filldata 0 -infile dmem.hex -format hex /test/uut/dmem/memory
 
 run -all

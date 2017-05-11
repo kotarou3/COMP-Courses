@@ -6,7 +6,7 @@ vsim test
 
 do ../general-signals.do
 
-mem load -filldata 0 -infile imem.hex -format hex /test/uut/imem/memory
+mem load -filldata 0 -infile imem.hex -format hex /test/uut/core/imem/memory
 mem load -filldata 0 -infile dmem.hex -format hex /test/uut/dmem/memory
 
 run -all
