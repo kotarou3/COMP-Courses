@@ -1,0 +1,299 @@
+#include <algorithm>
+#include <queue>
+#include <stack>
+#include <stdexcept>
+#include <cassert>
+
+#include "btree_iterator.h"
+
+template <typename T>
+btree<T>::btree(size_t bucketSize):
+    _bucketSize(bucketSize)
+{
+    if (bucketSize == 0)
+        throw std::invalid_argument("Bucket size cannot be zero");
+
+    _root->others.reserve(bucketSize);
+}
+
+template <typename T>
+btree<T>::btree(const btree<T>& other):
+    _bucketSize(other._bucketSize),
+    _size(other._size)
+{
+    std::stack<std::pair<const Node*, Node*>> stack;
+    stack.push(std::make_pair(other._root.get(), _root.get()));
+    while (!stack.empty()) {
+        const Node* from;
+        Node* to;
+        std::tie(from, to) = std::move(stack.top());
+        stack.pop();
+
+        to->others.reserve(_bucketSize);
+
+        if (from->left) {
+            to->left = std::make_unique<Node>();
+            to->left->parent = to;
+            stack.push(std::make_pair(from->left.get(), to->left.get()));
+        }
+        for (const auto& elem : from->others) {
+            if (elem.second) {
+                to->others.push_back(std::make_pair(elem.first, std::make_unique<Node>()));
+
+                Node* child = to->others.back().second.get();
+                child->parent = to;
+                stack.push(std::make_pair(elem.second.get(), child));
+            } else {
+                to->others.push_back(std::make_pair(elem.first, nullptr));
+            }
+        }
+    }
+}
+
+template <typename T>
+btree<T>& btree<T>::operator=(const btree<T>& other) {
+    btree<T> tmp(other);
+    using std::swap;
+    swap(*this, tmp);
+    return *this;
+}
+
+template <typename T>
+btree<T>::btree(btree<T>&& other) noexcept {
+    using std::swap;
+    swap(*this, other);
+}
+
+template <typename T>
+btree<T>& btree<T>::operator=(btree<T>&& other) noexcept {
+    btree<T> tmp(std::move(other));
+    using std::swap;
+    swap(*this, tmp);
+    return *this;
+}
+
+template <typename T>
+size_t btree<T>::size() const noexcept {
+    return _size;
+}
+
+template <typename T>
+bool btree<T>::empty() const noexcept {
+    return _size == 0;
+}
+
+template <typename T>
+typename btree<T>::iterator btree<T>::begin() noexcept {
+    Node* node = _root.get();
+    while (node->left)
+        node = node->left.get();
+    return {node, node->others.begin()};
+}
+
+template <typename T>
+typename btree<T>::const_iterator btree<T>::begin() const noexcept {
+    const Node* node = _root.get();
+    while (node->left)
+        node = node->left.get();
+    return {node, node->others.begin()};
+}
+
+template <typename T>
+typename btree<T>::const_iterator btree<T>::cbegin() const noexcept {
+    return begin();
+}
+
+template <typename T>
+typename btree<T>::iterator btree<T>::end() noexcept {
+    return {_root.get(), _root->others.end()};
+}
+
+template <typename T>
+typename btree<T>::const_iterator btree<T>::end() const noexcept {
+    return {_root.get(), _root->others.end()};
+}
+
+template <typename T>
+typename btree<T>::const_iterator btree<T>::cend() const noexcept {
+    return end();
+}
+
+template <typename T>
+typename btree<T>::reverse_iterator btree<T>::rbegin() noexcept {
+    return std::make_reverse_iterator(end());
+}
+
+template <typename T>
+typename btree<T>::const_reverse_iterator btree<T>::rbegin() const noexcept {
+    return std::make_reverse_iterator(end());
+}
+
+template <typename T>
+typename btree<T>::const_reverse_iterator btree<T>::crbegin() const noexcept {
+    return std::make_reverse_iterator(end());
+}
+
+template <typename T>
+typename btree<T>::reverse_iterator btree<T>::rend() noexcept {
+    return std::make_reverse_iterator(begin());
+}
+
+template <typename T>
+typename btree<T>::const_reverse_iterator btree<T>::rend() const noexcept {
+    return std::make_reverse_iterator(begin());
+}
+
+template <typename T>
+typename btree<T>::const_reverse_iterator btree<T>::crend() const noexcept {
+    return std::make_reverse_iterator(begin());
+}
+
+template <typename T>
+typename btree<T>::iterator btree<T>::find(const key_type& key) noexcept(is_noexcept_compare_v<key_type>) {
+    iterator result = lower_bound(key);
+    if (result != end() && _isEqual(*result, key))
+        return result;
+    return end();
+}
+
+template <typename T>
+typename btree<T>::const_iterator btree<T>::find(const key_type& key) const noexcept(is_noexcept_compare_v<key_type>) {
+    const_iterator result = lower_bound(key);
+    if (result != end() && _isEqual(*result, key))
+        return result;
+    return end();
+}
+
+template <typename T> template <typename BTree>
+auto btree<T>::_lower_bound(BTree& btree, const typename BTree::key_type& key) noexcept(is_noexcept_compare_v<key_type>) -> decltype(btree.lower_bound(key)) {
+    auto* lowerBoundNode = btree._root.get();
+    auto lowerBoundIndex = btree._root->others.end();
+    for (auto* node = btree._root.get(); node; ) {
+        auto childIndex = std::lower_bound(
+            node->others.begin(), node->others.end(), key,
+            [](const auto& a, const auto& b) {return a.first < b;}
+        );
+
+        if (childIndex == node->others.end()) {
+            // Node doesn't contain the lower bound - extend search to the
+            // rightmost child
+            if (node->others.size() == 0) {
+                assert(node == btree._root.get());
+                break;
+            }
+            node = node->others.back().second.get();
+        } else {
+            // Node contains a lower bound, but check the child to the left for
+            // an even lower bound
+            lowerBoundNode = node;
+            lowerBoundIndex = childIndex;
+
+            if (childIndex == node->others.begin())
+                node = node->left.get();
+            else
+                node = (childIndex - 1)->second.get();
+        }
+    }
+
+    return {lowerBoundNode, lowerBoundIndex};
+}
+
+template <typename T>
+typename btree<T>::iterator btree<T>::lower_bound(const key_type& key) noexcept(is_noexcept_compare_v<key_type>) {
+    return _lower_bound(*this, key);
+}
+
+template <typename T>
+typename btree<T>::const_iterator btree<T>::lower_bound(const key_type& key) const noexcept(is_noexcept_compare_v<key_type>) {
+    return _lower_bound(*this, key);
+}
+
+template <typename T>
+std::pair<typename btree<T>::iterator, bool> btree<T>::insert(const key_type& key) {
+    return _insert(lower_bound(key), key);
+}
+
+template <typename T>
+std::pair<typename btree<T>::iterator, bool> btree<T>::_insert(iterator hint, const key_type& key) {
+    if (hint != end() && _isEqual(*hint, key))
+        return std::make_pair(hint, false);
+
+    if (hint._node->others.size() == _bucketSize) {
+        // Node is full, so insert to the rightmost child slot left of the hint
+        Node* parent = hint._node;
+
+        // Get the child to the left
+        std::unique_ptr<Node>* node;
+        if (hint._index == hint._node->others.begin())
+            node = &hint._node->left;
+        else
+            node = &(hint._index - 1)->second;
+
+        // Keep on going down the rightmost child until we find a node that's
+        // not full
+        while (*node && (*node)->others.size() == _bucketSize) {
+            assert((*node)->others.size() > 0);
+            parent = node->get();
+            node = &(*node)->others.back().second;
+        }
+
+        // Create the node if it doesn't exist yet
+        std::unique_ptr<Node>* maybeNewNode = node;
+        std::unique_ptr<Node> newNode;
+        if (!*node) {
+            newNode = std::make_unique<Node>();
+            newNode->parent = parent;
+            newNode->others.reserve(_bucketSize);
+            maybeNewNode = &newNode;
+        }
+
+        // Insert to the end of the node
+        assert((*maybeNewNode)->parent == parent);
+        (*maybeNewNode)->others.push_back(std::make_pair(key, nullptr));
+
+        if (maybeNewNode != node)
+            *node = std::move(*maybeNewNode);
+        ++_size;
+
+        return std::make_pair(iterator(node->get(), (*node)->others.end() - 1), true);
+    } else {
+        // There's space in the node, so just insert into it directly
+        auto index = hint._node->others.insert(hint._index, std::make_pair(key, nullptr));
+        ++_size;
+
+        return std::make_pair(iterator(hint._node, std::move(index)), true);
+    }
+}
+
+template <typename T>
+void swap(btree<T>& a, btree<T>& b) noexcept {
+    using std::swap;
+    swap(a._root, b._root);
+    swap(a._bucketSize, b._bucketSize);
+    swap(a._size, b._size);
+}
+
+template <typename T>
+std::ostream& operator<<(std::ostream& out, const btree<T>& tree) {
+    std::queue<const typename btree<T>::Node*> queue;
+    queue.push(tree._root.get());
+    while (!queue.empty()) {
+        auto node = queue.front();
+        queue.pop();
+
+        assert(node == tree._root.get() || node->others.size() > 0);
+
+        if (node->left)
+            queue.push(node->left.get());
+        for (auto pair = node->others.cbegin(); pair != node->others.cend(); ++pair) {
+            out << pair->first;
+            if (pair->second)
+                queue.push(pair->second.get());
+
+            if (pair + 1 != node->others.cend() || !queue.empty())
+                out << " ";
+        }
+    }
+
+    return out;
+}

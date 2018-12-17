@@ -1,0 +1,121 @@
+#include <algorithm>
+#include <cassert>
+
+#include "btree_iterator.h"
+
+template <typename T>
+T& btree_iterator<T>::operator*() const noexcept {
+    return _index->first;
+}
+
+template <typename T>
+T* btree_iterator<T>::operator->() const noexcept {
+    return &**this;
+}
+
+template <typename T> template <typename U>
+bool btree_iterator<T>::operator==(const btree_iterator<U>& other) const noexcept {
+    return _node == other._node && _index == other._index;
+}
+
+template <typename T> template <typename U>
+bool btree_iterator<T>::operator!=(const btree_iterator<U>& other) const noexcept {
+    return !(*this == other);
+}
+
+template <typename T>
+btree_iterator<T>& btree_iterator<T>::operator++() noexcept(is_noexcept_compare_v<typename Container::key_type>) {
+    if (_index->second) {
+        // If there's a child to the right, descend to the leftmost descendant
+        // of it
+        _node = _index->second.get();
+        while (_node->left)
+            _node = _node->left.get();
+        assert(_node->others.size() > 0);
+        _index = _node->others.begin();
+
+        // Amortised complexity: O(1 / b)
+    } else {
+        // Otherwise, go to our right sibling
+        const auto& oldKey = _index->first;
+        ++_index;
+
+        // If we're past our last sibling, ascend to our parent and find the
+        // next element
+        while (_node->parent && _index == _node->others.end()) {
+            _node = _node->parent;
+            _index = std::lower_bound(
+                _node->others.begin(), _node->others.end(), oldKey,
+                [](const auto& a, const auto& b) {return a.first < b;}
+            );
+
+            assert(_node->others.size() > 0);
+
+            // If we're still past the last sibling, repeat until we're not
+        }
+
+        // Amortised complexity: O(1 + log(b) / b) = O(1)
+    }
+
+    // Despite the std::lower_bound inside a loop, our net amortised complexity
+    // is: O(1 / b) + O(1) = O(1), where b is the bucket size
+
+    return *this;
+}
+
+template <typename T>
+btree_iterator<T>& btree_iterator<T>::operator--() noexcept(is_noexcept_compare_v<typename Container::key_type>) {
+    auto& left = _index == _node->others.begin() ? _node->left : (_index - 1)->second;
+    if (left) {
+        // If there's a child to the left, descend to the rightmost descendant
+        // of it
+        _node = left.get();
+        while (_node->others.back().second)
+            _node = _node->others.back().second.get();
+        assert(_node->others.size() > 0);
+        _index = _node->others.end() - 1;
+    } else {
+        if (_index != _node->others.begin()) {
+            // Otherwise, go to our left sibling if it exists
+            --_index;
+        } else {
+            // Or if it doesn't, ascend to our parent and find the previous
+            // element
+            const auto& oldKey = _index->first;
+            while (_node->parent) {
+                // ...by first finding the *next* element in our parent
+                _node = _node->parent;
+                _index = std::lower_bound(
+                    _node->others.begin(), _node->others.end(), oldKey,
+                    [](const auto& a, const auto& b) {return a.first < b;}
+                );
+
+                assert(_node->others.size() > 0);
+
+                if (_index != _node->others.begin()) {
+                    // ...and subtracting one, if it isn't the first element
+                    --_index;
+                    break;
+                }
+
+                // If it was the first, we continue ascending until it's not
+            }
+        }
+    }
+
+    return *this;
+}
+
+template <typename T>
+btree_iterator<T> btree_iterator<T>::operator++(int) noexcept(is_noexcept_compare_v<typename Container::key_type>) {
+    btree_iterator old = *this;
+    ++(*this);
+    return old;
+}
+
+template <typename T>
+btree_iterator<T> btree_iterator<T>::operator--(int) noexcept(is_noexcept_compare_v<typename Container::key_type>) {
+    btree_iterator old = *this;
+    --(*this);
+    return old;
+}
