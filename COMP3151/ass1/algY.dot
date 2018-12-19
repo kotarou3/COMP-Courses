@@ -1,0 +1,19 @@
+digraph G {
+    p1 -> p1;
+    p1 -> p3 [label = <b<sub>0</sub> ← 1>];
+    p3 -> p4 [label = <b<sub>1</sub> = 1>];
+    p4 -> p5 [label = <b<sub>0</sub> ← 1>];
+    p5 -> p6 [label = <b<sub>0</sub> = 1>];
+    p6 -> p3 [label = <b<sub>0</sub> ← 1>];
+    p3 -> p7 [label = <b<sub>1</sub> ≠ 1>];
+    p7 -> p1 [label = <b<sub>0</sub> ← 0>];
+
+    q1 -> q1;
+    q1 -> q3 [label = <b<sub>1</sub> ← 1>];
+    q3 -> q4 [label = <b<sub>0</sub> = 1>];
+    q4 -> q5 [label = <b<sub>1</sub> ← 0>];
+    q5 -> q6 [label = <b<sub>0</sub> = 0>];
+    q6 -> q3 [label = <b<sub>1</sub> ← 1>];
+    q3 -> q7 [label = <b<sub>0</sub> ≠ 1>];
+    q7 -> q1 [label = <b<sub>1</sub> ← 0>];
+}
