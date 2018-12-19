@@ -1,0 +1,170 @@
+\documentclass[a4paper]{scrartcl}
+\usepackage[cm]{fullpage}
+\usepackage{amsmath, amssymb}
+\usepackage{listings}
+
+\usepackage{tikz, pgfplots}
+\pgfplotsset{compat = 1.5}
+
+\usepackage{sectsty}
+\sectionfont{\large\selectfont}
+\subsectionfont{\normalsize\selectfont}
+
+\newcommand{\true}{\top}
+\newcommand{\false}{\bot}
+\newcommand{\comp}{\circ}
+
+\newcommand{\always}{\square}
+\newcommand{\eventually}{\lozenge}
+
+\begin{document}
+
+\title{COMP3151: Warmup Assignment}
+\author{Donny Yang \\ z3470068}
+\date{2017-08-20}
+\maketitle
+
+\section{Use \texttt{spin} to verify that Algorithm Y is a solution to the critical section problem. Address all 4 desiderata given in lecture 3.}
+See attached \texttt{algY.pml} for the Promela source code passed into \texttt{spin} (which then generates and compiles a binary named \texttt{pan} to run). A notable difference of the Promela implementation is that the original bit array \texttt{b} has been translated into a boolean array.
+
+Labels \texttt{wap} and \texttt{waq} represents the start of the preprotocols, while \texttt{csp} and \texttt{csq} represents the critical sections, of \(p\) and \(q\) respectively.
+
+\subsection{Mutual Exclusion}
+\[\texttt{mutex} \leftarrow \lnot \eventually(\texttt{csp} \land \texttt{csq})\]
+\begin{lstlisting}
+$ ./pan -m10000  -a -f -N mutex
+...
+State-vector 44 byte, depth reached 117, errors: 0
+\end{lstlisting}
+
+\subsection{Deadlock Freedom}
+\[\texttt{dlf} \leftarrow \always(\texttt{wap} \land \texttt{waq} \implies \eventually(\texttt{csp} \lor \texttt{csq}))\]
+\begin{lstlisting}
+$ ./pan -m10000  -a -f -N dlf
+...
+State-vector 44 byte, depth reached 117, errors: 0
+\end{lstlisting}
+
+\subsection{Absence of Unnecessary Delay}
+We now need two LTL claims, one for \(p\), and one for \(q\), to ensure neither has unnecessary delay:
+\[\texttt{audp} \leftarrow \always(\texttt{wap} \land (\always \lnot b_1) \implies \eventually \texttt{csp})\]
+\[\texttt{audq} \leftarrow \always(\texttt{waq} \land (\always \lnot b_0) \implies \eventually \texttt{csq})\]
+\begin{lstlisting}
+$ ./pan -m10000  -a -f -N audp
+...
+State-vector 44 byte, depth reached 122, errors: 0
+$ ./pan -m10000  -a -f -N audq
+...
+State-vector 44 byte, depth reached 117, errors: 0
+\end{lstlisting}
+
+\subsection{Eventual Entry}
+Once again we need two claims, to ensure both eventually executes their critical section:
+\[\texttt{eep} \leftarrow \always(\texttt{wap} \implies \eventually \texttt{csp})\]
+\[\texttt{eeq} \leftarrow \always(\texttt{waq} \implies \eventually \texttt{csq})\]
+\begin{lstlisting}
+$ ./pan -m10000  -a -f -N eep
+...
+State-vector 44 byte, depth reached 122, errors: 0
+$ ./pan -m10000  -a -f -N eeq
+...
+State-vector 44 byte, depth reached 47, errors: 1
+\end{lstlisting}
+
+We can see that our implementation of Algorithm Y does not satisfy the \texttt{eeq} claim. In other words, process \(q\) might be delayed indefinitely from entering its critical section.
+
+We can quite easily show an execution example of this:
+\[p_1, p_2, p_3, q_1, q_2, q_3, q_4, q_5, p_7, p_8, p_1, p_2, p_3, p_7, p_8, p_1, p_2, p_3, ...\]
+
+Notice that \(p\) can continue executing \(p_7, p_8, p_1, p_2, p_3\) indefinitely despite \(q\) wanting in to the critical section.
+
+\subsection{Summary}
+We can see that Algorithm Y satisfies all of the critical section desiderata, except eventual entry for process \(q\). In fact, the algorithm appears to have a static priority system for the critical section, where process \(p\) always has priority over \(q\) in entering the critical section.
+
+\section{Encode Algorithm Y as a parallel composition of two transition diagrams. Define an assertion network \(Q\) such that the assertions at the locations representing the critical sections express mutual exclusion. Prove that \(Q\) is inductive.}
+\begin{figure}
+    \centering
+    \includegraphics[width = 15cm]{{algY.dot}.pdf}
+    \caption{Transition diagram for Algorithm Y}
+    \label{fig:transition-diagram}
+\end{figure}
+
+Figure \ref{fig:transition-diagram} shows the state transition diagrams of Algorithm Y. \(p_1\) and \(q_1\) are the respective starting states and non-critical sections for processes \(p\) and \(q\), while \(p_7\) and \(q_7\) are their critical sections. Some simplifications have been made to the diagram:
+\begin{itemize}
+    \item The initialisation of \(b_0\) and \(b_1\) have been left out. They are assumed to both be initialised to 0 at the start.
+    \item Some transitions where there are no guards nor state changes (except the program counter) have been contracted (removed), and corresponding nodes merged. For example, the \(p_1 \to p_2\) transition was contracted, and consequently \(p_2\) has been merged into \(p_1\). This is justified because the transition will always be taken, and no state will be influenced by following the transition since we do not use program counters.
+\end{itemize}
+
+The entirety of \(p_3 \to p_4 \to p_5 \to p_6 \to p_3\) could be replaced with a single \(p_3 \to p_3\) with guard \(b_1 = 1\), but have been left in for completeness and symmetry.
+
+\subsection{Assertion Network}
+We need to find an invariant \(I\). First we limit the bounds on \(b\) and control pointers:
+\begin{align}
+    b_0, b_1 &\in \{0, 1\} \label{eq:b-bounds} \\
+    cp_p, cp_q &\in \{1, 3..7\} \label{eq:cp-bounds}
+\end{align}
+
+Next, since \(b_0\) and \(b_1\) are only ever written to from one process each, we can tie them to their process' state:
+\begin{align}
+    b_0 = 1 &\iff p_{3..7} \label{eq:b_0} \\
+    b_1 = 1 &\iff q_{3, 4, 7} \label{eq:b_1}
+\end{align}
+
+Finally, we need mutual exclusion:
+\begin{align}
+    p_7 &\implies \lnot q_7 \label{eq:p_7} \\
+    q_7 &\implies \lnot p_7 \label{eq:q_7}
+\end{align}
+
+Our precondition is simply the initial state, which clearly satisfies the invariant:
+\[p_1 \land q_1 \land (b_0, b_1) = (0, 0)\]
+
+Our assertion network \(Q\) is then simply the invariant conjunct with each state:
+\begin{align*}
+    \forall n &\in \{1, 3..7\} \\
+    Q(p_n) &= I \land p_n \\
+    Q(q_n) &= I \land q_n
+\end{align*}
+
+\subsection{Local Correctness}
+It is trivial to see (\ref{eq:b-bounds}) and (\ref{eq:cp-bounds}) are satisfied everywhere. Furthermore, (\ref{eq:b_0}) and (\ref{eq:b_1}) are also trivially true, since they were derived from the transition diagram itself and only ever written from one process each.
+
+This leaves us with only two conjuncts to examine: (\ref{eq:p_7}) and (\ref{eq:q_7}). Since they are only one-way implications, we only have to examine the transitions \emph{to} states \(p_7\) and \(q_7\):
+\begin{itemize}
+    \item \(p_3 \to p_7: I \land p_3 \land b_1 \neq 1 \implies (I \land p_7) \comp [cp_p \leftarrow 7]\) \\
+        Using (\ref{eq:b_1}), we can see \(cp_q \neq 7\), so (\ref{eq:p_7}) continues to be satisfied.
+    \item \(q_3 \to q_7: I \land q_3 \land b_0 \neq 1 \implies (I \land q_7) \comp [cp_q \leftarrow 7]\) \\
+        Using (\ref{eq:b_0}), we can see \(cp_p \neq 7\), so (\ref{eq:q_7}) continues to be satisfied.
+\end{itemize}
+
+The remaining (trivial) proof obligations are as follows:
+\begin{align*}
+    p_1 \to p_3: I \land p_1 \implies (I \land p_3) \comp [(b_0, cp_p) \leftarrow (1, 3)] \\
+    p_3 \to p_4: I \land p_3 \land b_1 = 1 \implies (I \land p_4) \comp [cp_p \leftarrow 4] \\
+    p_4 \to p_5: I \land p_4 \implies (I \land p_5) \comp [(b_0, cp_p) \leftarrow (1, 5)] \\
+    p_5 \to p_6: I \land p_5 \land b_0 = 1 \implies (I \land p_6) \comp [cp_p \leftarrow 6] \\
+    p_6 \to p_3: I \land p_6 \implies (I \land p_3) \comp [(b_0, cp_p) \leftarrow (1, 3)] \\
+    p_7 \to p_1: I \land p_7 \implies (I \land p_1) \comp [(b_0, cp_p) \leftarrow (0, 1)] \\
+    q_1 \to q_3: I \land q_1 \implies (I \land q_3) \comp [(b_1, cp_q) \leftarrow (1, 3)] \\
+    q_3 \to q_4: I \land q_3 \land b_0 = 1 \implies (I \land q_4) \comp [cp_q \leftarrow 4] \\
+    q_4 \to q_5: I \land q_4 \implies (I \land q_5) \comp [(b_1, cp_q) \leftarrow (0, 5)] \\
+    q_5 \to q_6: I \land q_5 \land b_0 = 0 \implies (I \land q_6) \comp [cp_q \leftarrow 6] \\
+    q_6 \to q_3: I \land q_6 \implies (I \land q_3) \comp [(b_1, cp_q) \leftarrow (1, 3)] \\
+    q_7 \to q_1: I \land q_7 \implies (I \land q_1) \comp [(b_1, cp_q) \leftarrow (0, 1)]
+\end{align*}
+
+\subsection{Interference Freedom}
+Since we are using an universal invariant \(I\), interference freedom comes ``for free'' from our local correctness proof.
+
+\subsection{Mutual Exclusion}
+Can we be in both \(p_7\) and \(q_7\) states simultaneously?
+\begin{align*}
+    Q(p_7) \land Q(q_7) &\implies I \land p_7 \land q_7 \\
+    &\implies (p_7 \implies \lnot q_7) \land (q_7 \implies \lnot p_7) \land p_7 \land q_7 \\
+    &\implies (\true \implies \false) \land (\true \implies \false) \\
+    &\implies \false
+\end{align*}
+
+Therefore, we have mutual exclusion.
+
+\end{document}

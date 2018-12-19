@@ -1,0 +1,16 @@
+*.aux
+*.bbl
+*.bcf
+*.bib
+*.blg
+*.gz
+*.log
+*.out
+*.pdf
+*.xml
+
+*.trail
+*.m
+*.p
+*.t
+*.b

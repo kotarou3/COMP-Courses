@@ -1,0 +1,260 @@
+\documentclass[a4paper]{scrartcl}
+\usepackage[cm]{fullpage}
+\usepackage{amsmath, amssymb}
+\usepackage{hyperref}
+\usepackage{listings, color, caption}
+
+\usepackage{sectsty}
+\sectionfont{\large\selectfont}
+\subsectionfont{\normalsize\selectfont}
+
+\definecolor{dkgreen}{rgb}{0,0.6,0}
+\definecolor{gray}{rgb}{0.5,0.5,0.5}
+\definecolor{mauve}{rgb}{0.58,0,0.82}
+
+\lstset{
+    basicstyle = \footnotesize,
+    commentstyle = \color{dkgreen},
+    frame = single,
+    keepspaces = true,
+    keywordstyle = \color{blue},
+    numbers = left,
+    numbersep = 5pt,
+    numberstyle = \tiny\color{gray},
+    rulecolor = \color{black},
+    stringstyle = \color{mauve},
+    showstringspaces = false
+}
+
+\newcommand{\always}{\square}
+\newcommand{\eventually}{\lozenge}
+
+\begin{document}
+
+\title{COMP3151: Assignment 1}
+\author{Donny Yang and Austin Tankiang \\ z3470068 and z3470194}
+\date{2017-09-17}
+\maketitle
+
+\begin{abstract}
+    We implement a shared memory concurrent non-blocking linear time complexity counter that can be incremented by one thread at a time, while simultaneously being read by any arbitrary number of threads, under the assumption that the shared memory supports FIFO (or stronger) consistency.
+\end{abstract}
+
+\section{Materials and Methods}
+Please refer to the assignment specification, which can be found at: \url{http://www.cse.unsw.edu.au/~cs3151/17s2/ass/ass1/ass1.pdf}
+
+We have two almost identical implementations of our counter, one in Promela (for model checking purposes), and one in C11 (for usability purposes).
+
+We impose the following additional requirements on the running environment of the counter:
+\begin{itemize}
+    \item Shared memory supports FIFO (or stronger) consistency.
+    \item If different threads want to increment the counter, they must synchronise on the value of the counter (that is, the incrementing thread's current view of memory must contain the counter representation at its latest possible value).
+    \item For our C11 implementation: \(R, B, k \le \texttt{SIZE\_MAX}\), where \texttt{SIZE\_MAX} is the largest value a \texttt{size\_t} type can store.
+    \item For our Promela implementation: \(B \times \texttt{BYTE\_SIZE} \le 31\), where \texttt{BYTE\_SIZE} is the number of bits in a byte we are simulating.
+\end{itemize}
+
+\subsection{C11 Implementation \texttt{counter.c}}
+The shared counter's representation in memory is actually two separate counters of \(B\) bytes wide each, \texttt{c1} and \texttt{c2}, along with overflow flags \texttt{of1} and \texttt{of2}. The overflow flags acts as an extra most significant bit for the counters, so each flag is tied to a single counter, forming logical counters of \texttt{of1:c1} and \texttt{of2:c2}. Both logical counters are initialised to 0.
+
+The \texttt{increment()} function increments the counter, performing the following steps in order:
+\begin{enumerate}
+    \item Read the existing value with \texttt{read()} to local memory, which we will denote as the ``local counter''.
+    \item Increments the local counter.
+    \item Writes the updated local counter least significant byte (LSB) first to \texttt{of1:c1}.
+    \item Writes the updated local counter least significant byte (LSB) first to \texttt{of2:c2}.
+\end{enumerate}
+Since an assumption is that the thread calling \texttt{increment()} must have the latest possible representation of the counter in its view of memory, this will always increment the shared counter correctly.
+
+The \texttt{read()} function reads a ``correct'' value of the counter, performing the following steps in order:
+\begin{enumerate}
+    \item Reads \texttt{of2:c2} most significant byte (MSB) first to local memory, which we will denote as the ``local counter''.
+    \item ``Combs'' through \texttt{c1} and \texttt{c2} LSB first (that is, reads in the order \texttt{c1[0]}, \texttt{c2[0]}, \texttt{c1[1]}, \texttt{c2[1]}, ...), comparing each byte with the corresponding byte in our local counter.
+    \item If the newly read byte is larger than our local counter version, the local counter is updated with that byte, and all bytes of lower significance are set to 0.
+    \item \texttt{of1} is read, and if it differs from our local counter version, the entire local counter is set to 0.
+    \item The local counter is returned as a ``correct'' read of the shared counter.
+\end{enumerate}
+
+From the above steps, we can see that \texttt{increment()} is \(\mathcal{O}(B)\), and if the zeroing of the lower significant bits are hoisted out of the combing loop, \texttt{read()} is also \(\mathcal{O}(B)\).
+
+To test the functions, we simply spawn a \texttt{writer()} thread and \(R\) \texttt{reader()} threads, of which simply loop \(k\) times (or indefinitely if \(k = 0\)) calling \texttt{increment()} and \texttt{read()}, respectively.
+
+To enforce FIFO consistency on the shared memory, we synchronise on all of shared memory at thread startup (automatically, as part of \texttt{thrd\_create()} semantics), as well as use C11's atomic library to explicitly access the bytes of \texttt{of1:c1} and \texttt{of2:c2} with sequential consistency.
+
+Our restrictions of \(R, B, k \le \texttt{SIZE\_MAX}\) are simply due to the fact that they are implemented as \texttt{size\_t} types.
+
+\subsection{Promela Implementation \texttt{counter.pml}}
+The core implementation of the counter in C11 is identical to the implementation we have done in Promela. By ``core implementation'', we mean the ordering of writes done by \texttt{increment()}, and the entirety of \texttt{read()}. They are no longer separate functions, however (since Promela does not support functions), and are now directly inlined into \texttt{writer()} and \texttt{reader()}.
+
+We introduce a new constant \texttt{BYTE\_SIZE} which indicates how many bits are in each counter byte we wish to use. For a ``real'' byte, this value would be 8, but that causes our state space to be too large for model checking, so we limit it to something smaller such as 2. Checking a smaller byte size is equivalent to checking a larger byte size, since the size of a byte would not cause concurrency issues --- it's the non-atomicity of writing multiple bytes that causes concurrency issues.
+
+Our \texttt{increment()} no longer reads the shared counter and increments, but instead directly writes a reference loop counter value. This reduces the state space of our model, while retaining the same behaviour as before. Additionally, we atomically write the loop counter to two reference counters \texttt{ref\_high} and \texttt{ref\_low}, that represent the maximum and minimum ``correct'' value of the counter at the current time, to be used by \texttt{reader()} for checking the correctness of reads. If the counter would overflow on an increment, we also wrap the reference counter around back to 0. But if the counter has wrapped around so far that it encounters a readers read of \texttt{ref\_low} to be the same value (done by checking each reader's \texttt{read\_low[\_pid]}), we know that reader has taken so long that all possible counter values are now correct for that reader, so we set their \texttt{read\_low[\_pid]} to \(-1\).
+
+\texttt{writer()} now only loops indefinitely, equivalent to \(k = 0\).
+
+\texttt{reader()} no longer loops, and effectively calls \texttt{read()} only once, since we can now rely on \texttt{spin} to simulate it with all possible interleaving, including ones where a large delay occurs after \texttt{writer()} starts and before \texttt{reader()} starts. Additionally to the \texttt{read()}, instrumentation is inserted before and after it to read the reference counters and check correctness, resulting in a \texttt{reader()} of the following steps:
+\begin{enumerate}
+    \item Read \texttt{ref\_low} to \texttt{read\_low[\_pid]}.
+    \item Call \texttt{read()} to read the counter into \texttt{value}.
+    \item Convert \texttt{value} to an \texttt{int} type (for easy comparisons) and store it in \texttt{value\_int}.
+    \item If the counter has not completely wrapped around (\(\texttt{read\_low[\_pid]} \neq -1\)), assert the following:
+    \begin{itemize}
+        \item If \(\texttt{read\_low[\_pid]} \le \texttt{ref\_high}\), then we have not overflowed, and thus a correct counter value must satisfy:
+        \[\texttt{read\_low[\_pid]} \le \texttt{value\_int} \le \texttt{ref\_high}\]
+        \item Otherwise, we have overflowed only once, and thus a correct counter value must satisfy:
+        \[\texttt{read\_low[\_pid]} \le \texttt{value\_int} \lor \texttt{value\_int} \le \texttt{ref\_high}\]
+    \end{itemize}
+\end{enumerate}
+
+In addition to the above assertions, we have the following LTL to show that a reader cannot stall indefinitely:
+\[\texttt{reads\_finish}: \eventually(\texttt{reader@reader\_end})\]
+
+The above ``reference counters'' are all implemented with the \texttt{int} type to simplify operations on it, which means we must restrict our range of counter values to the values that can be stored in an \texttt{int}. This creates the restriction of \(B \times \texttt{BYTE\_SIZE} \le 31\). This is justified, since model checking can only be done on small counters, or otherwise the state space would be too large for a reasonable execution time.
+
+\texttt{spin} already enforces FIFO consistency on shared memory, so there is no need for us to do so manually.
+
+\texttt{atomic} and \texttt{d\_step} blocks are scattered all around the program, where it wouldn't effect the behaviour, to reduce the state space.
+
+\subsection{Model Checking with \texttt{spin}}
+First, to check for correctness, we ignore the LTL and use the following command:
+\begin{lstlisting}
+spin -run -noclaim -w27 counter.pml
+\end{lstlisting}
+
+To check the LTL, we use the following command:
+\begin{lstlisting}
+spin -run -a -f -ltl reads_finish -w28 -m100000 counter.pml
+\end{lstlisting}
+
+For both tests above, we set \(B \in \{2, 3\}\), \(R = 1\) and \(\texttt{BYTE\_SIZE} = 2\).
+
+\section{Results}
+\begin{lstlisting}[float, caption = {\texttt{spin} output for correctness checking with \(B = 3\)}, label = lst:correctness]
+$ spin -run -noclaim -w27 counter.pml
+ltl reads_finish: <> ((reader@reader_end))
+Depth=    6133 States=    1e+06 Transitions=  1.2e+06 Memory=  1116.331	t=     0.37 R=   3e+06
+Depth=    6133 States=    2e+06 Transitions= 2.41e+06 Memory=  1207.933	t=     0.77 R=   3e+06
+...
+Depth=    7663 States= 1.93e+08 Transitions= 2.36e+08 Memory= 18701.487	t=      103 R=   2e+06
+Depth=    7663 States= 1.94e+08 Transitions= 2.37e+08 Memory= 18793.089	t=      103 R=   2e+06
+
+(Spin Version 6.4.6 -- 2 December 2016)
+   	+ Partial Order Reduction
+
+Full statespace search for:
+   	never claim         	- (not selected)
+   	assertion violations	+
+   	cycle checks       	- (disabled by -DSAFETY)
+   	invalid end states	+
+
+State-vector 76 byte, depth reached 7663, errors: 0
+1.9473656e+08 states, stored
+ 43152130 states, matched
+2.3788869e+08 transitions (= stored+matched)
+ 17116398 atomic steps
+hash conflicts:  60953195 (resolved)
+
+Stats on memory usage (in Megabytes):
+19314.386	equivalent memory usage for states (stored*(State-vector + overhead))
+17847.160	actual memory usage for states (compression: 92.40%)
+            	state-vector as stored = 68 byte + 28 byte overhead
+ 1024.000	memory used for hash table (-w27)
+    0.534	memory used for DFS stack (-m10000)
+   11.230	memory lost to fragmentation
+18860.569	total actual memory usage
+
+
+unreached in proctype writer
+   	counter.pml:74, state 75, "-end-"
+   	(1 of 75 states)
+unreached in proctype reader
+   	(0 of 79 states)
+unreached in claim reads_finish
+   	_spin_nvr.tmp:4, state 3, "(!((reader._p==reader_end)))"
+   	_spin_nvr.tmp:6, state 6, "-end-"
+   	(2 of 6 states)
+
+pan: elapsed time 104 seconds
+pan: rate   1876798 states/second
+\end{lstlisting}
+
+\begin{lstlisting}[float, caption = {\texttt{spin} output for checking the LTL claim \texttt{reads\_finish} with \(B = 3\)}, label = lst:reads-finish]
+$ spin -run -a -f -ltl reads_finish -w28 -collapse -m100000 counter.pml
+ltl reads_finish: <> ((reader@reader_end))
+warning: only one claim defined, -N ignored
+Depth=    9457 States=    1e+06 Transitions= 1.22e+06 Memory=  2074.825	t=     0.55 R=   2e+06
+Depth=    9457 States=    2e+06 Transitions= 2.48e+06 Memory=  2095.724	t=     1.14 R=   2e+06
+...
+Depth=   13069 States= 4.21e+08 Transitions= 5.41e+08 Memory= 10517.794	t=      254 R=   2e+06
+Depth=   13069 States= 4.22e+08 Transitions= 5.43e+08 Memory= 10538.302	t=      255 R=   2e+06
+
+(Spin Version 6.4.6 -- 2 December 2016)
+	+ Partial Order Reduction
+	+ Compression
+
+Full statespace search for:
+	never claim         	+ (reads_finish)
+	assertion violations	+ (if within scope of claim)
+	acceptance   cycles 	+ (fairness enabled)
+	invalid end states	- (disabled by never claim)
+
+State-vector 84 byte, depth reached 13069, errors: 0
+1.8524708e+08 states, stored (4.22109e+08 visited)
+1.2060817e+08 states, matched
+5.4271718e+08 transitions (= visited+matched)
+ 42515350 atomic steps
+hash conflicts:  77322611 (resolved)
+
+Stats on memory usage (in Megabytes):
+21199.846	equivalent memory usage for states (stored*(State-vector + overhead))
+ 8488.262	actual memory usage for states (compression: 40.04%)
+         	state-vector as stored = 12 byte + 36 byte overhead
+ 2048.000	memory used for hash table (-w28)
+    5.341	memory used for DFS stack (-m100000)
+    1.412	memory lost to fragmentation
+10540.255	total actual memory usage
+
+
+nr of templates: [ 0:globals 1:chans 2:procs ]
+collapse counts: [ 0:77056 2:1373 3:12475 4:1 ]
+unreached in proctype writer
+	counter.pml:74, state 75, "-end-"
+	(1 of 75 states)
+unreached in proctype reader
+	counter.pml:142, state 79, "-end-"
+	(1 of 79 states)
+unreached in claim reads_finish
+	_spin_nvr.tmp:6, state 6, "-end-"
+	(1 of 6 states)
+
+pan: elapsed time 255 seconds
+pan: rate 1656173.8 states/second
+\end{lstlisting}
+
+The output of \texttt{spin} for the correctness and LTL claim with \(B = 3\) are shown in Listings \ref{lst:correctness} and \ref{lst:reads-finish} respectively. Notably, no warnings and errors appear (excluding the one about an option being ignored). Similar output with no warnings and errors appeared with \(B = 2\).
+
+Attempting to run the same commands with \(B = 2\) and \(R = 2\) (even with the \texttt{-collapse} option on the correctness check) caused \texttt{spin} to consume more than 20 GB of RAM, so we gave up on model checking multiple readers.
+
+\section{Discussion}
+No warnings and errors in \texttt{spin} output means whatever was checked was correct. For us, this means our algorithm is correct, and readers eventually complete, assuming that \(B \in \{2, 3\}\), \(R = 1\) and \(\texttt{BYTE\_SIZE} = 2\).
+
+We can trivially extend this result for any \(R \ge 1\), by noticing that the readers do not change any shared state, and therefore any arbitrary number of readers can be modelled by a single reader.
+
+\section{Proof}
+To prove that our algorithm is correct, first we note that the reader process only reads from shared memory and never writes. This means that two reader processes can never interact with each other, so we only need to prove the case where there is only one reader. Now we will prove that this reader will return a value that has been assumed by the counter on every read call.
+
+Let \(c_{start}\) be the value of the counter at the beginning of the read, \(c_{now}\) be the value of the counter at the current time, and \(lc\) denote the local counter. For the reader to be correct, we need to prove that at the end of read, the value in the local counter is between \(c_{start}\) and \(c_{now}\). We prove this by contradiction.
+
+Suppose at the end of read, \(lc\) is outside the range of values denoted by \(c_{start}\) and \(c_{now}\). First we note that none of our steps can decrease the value of \(lc\). Also, for our initial read to \(lc\) from \texttt{c2}, we read MSB first, while it was written LSB first, so \(lc\) cannot be greater than \(c_{now}\) (we invoke FIFO consistency here). Hence, step 1 of read must have returned a value into \(lc\) less than \(c_{start}\). We can reformulate \(lc < c_{start}\) in a different way:
+\[\exists i.\ lc[i] < c_{start}[i] \land (\forall j \in (i, B).\ lc[j] = c_{start}[j])\]
+
+That is, there exists an \(i\) such that the \(i\)th byte in \(lc\) which is less than the corresponding byte in \(c_{start}\), and all more significant bytes are equal. As we read from MSB first and write LSB first, this means that between the time we read byte \(i + 1\) and byte \(i\), byte \(i\) has overflown. So the \((i + 1)\)th byte in \(c_{now}\) must have changed from \(c_{start}\).
+% TODO: what if i == B - 1 %
+
+Next we ``comb'' through the counters by alternately reading \texttt{c1} and \texttt{c2} LSB first. Our writer updates the counters one after the other, so at any point in time one of them has the correct value. So, by alternating reads to \texttt{c1} and \texttt{c2}, we force the counters to update. When this ``combing'' process reaches the \((i + 1)\)th byte, it reads a value, call it \(v\). If \(v\) is greater than the \((i + 1)\)th byte in \(c_{start}\), we can set the \((i + 1)\)th byte in \(lc\) to be \(v\), and all less significant bytes to be zero. That will be a correct value as we know the \((i + 1)\)th byte has assumed \(v\) in the past, and the more significant bytes of \(lc\) are unchanged from \(c_{start}\). So to return an incorrect value, it must not read a value greater than the \((i + 1)\)th byte in \(c_{start}\), thus it has to overflow the \((i + 1)\)th byte. Now this means that the \((i + 2)\)th byte must have changed from \(c_{start}\), so we can repeat the same argument until the last byte must be overflowed, which will toggle the overflow bit. This leads into step 4, where we check \texttt{of1}. The last read was of \texttt{c2}, which forces an update of the logical counter \texttt{of1:c1}, and since the overflow bit has been toggled, \texttt{of1} will be different to when we read it at the start of the read call, and the algorithm can only return 0, which is a correct value as the counter has overflown. Of course, if the counter is incremented enough to overflow it again so the overflow bits read equal, any read value is correct so it does not matter what read returns. Hence, by contradiction, it is impossible for the read process to return an incorrect value.
+
+\section{Conclusion}
+\emph{(From Abstract)} We have implemented a shared memory concurrent non-blocking linear time complexity counter that can be incremented by one thread at a time, while simultaneously being read by any arbitrary number of threads, under the assumption that the shared memory supports FIFO (or stronger) consistency.
+
+We have proved its correctness, for low values of \(R\) and \(B\) with \texttt{spin}, and for arbitrary values with an informal argument. Both a Promela implementation \texttt{counter.pml} (which was used directly with our \texttt{spin} proof) and C11 implementation \texttt{counter.c} are provided.
+
+\end{document}

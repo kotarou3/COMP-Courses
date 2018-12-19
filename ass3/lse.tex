@@ -1,0 +1,246 @@
+\documentclass[a4paper]{scrartcl}
+\usepackage[cm]{fullpage}
+\usepackage{amsmath, amssymb}
+\usepackage{hyperref}
+\usepackage{listings, color, caption}
+
+\usepackage{sectsty}
+\sectionfont{\large\selectfont}
+\subsectionfont{\normalsize\selectfont}
+
+\definecolor{dkgreen}{rgb}{0,0.6,0}
+\definecolor{gray}{rgb}{0.5,0.5,0.5}
+\definecolor{mauve}{rgb}{0.58,0,0.82}
+
+\lstset{
+    basicstyle = \footnotesize,
+    commentstyle = \color{dkgreen},
+    frame = single,
+    keepspaces = true,
+    keywordstyle = \color{blue},
+    numbers = left,
+    numbersep = 5pt,
+    numberstyle = \tiny\color{gray},
+    rulecolor = \color{black},
+    stringstyle = \color{mauve},
+    showstringspaces = false
+}
+
+\newcommand{\always}{\square}
+\newcommand{\eventually}{\lozenge}
+
+\begin{document}
+
+\title{COMP3151: Assignment 2}
+\author{Donny Yang and Austin Tankiang \\ z3470068 and z3470194}
+\date{2017-10-28}
+\maketitle
+
+\begin{abstract}
+    We implement a distributed algorithm over a network to achieve consensus of a matching between nodes. We use cryptographically signed messages to achieve some level of byzantine fault tolerance.
+\end{abstract}
+
+\section{Materials and Methods}
+Please refer to the assignment specification, which can be found at: \url{http://www.cse.unsw.edu.au/~cs3151/17s2/ass/ass2/ass2.pdf}
+
+We have two implementations of the algorithm that use the same approach, one in Promela (for model checking purposes), and one in C using OpenMPI (for usability purposes).
+
+We impose the following additional assumptions on the seniors.
+\begin{itemize}
+    \item The subgraph formed by sober seniors are connected. If they are not connected, then it is trivial to prove impossibility --- two sober seniors connected only by non-sober seniors cannot discern the existence of the other.
+    \item The whole graph is connected. This is a safe assumption as any solution that works on a connected graph also works on a disconnected graph by treating each component separately.
+\end{itemize}
+
+\subsection{Correctness}
+The correctness conditions of the LSE is as follows:
+
+\begin{enumerate}
+\item Each senior makes exactly one announcement.
+\item If some sober senior \(a\) announces an LSE with some other senior \(b\) we have that:
+    \begin{enumerate}
+    \item Senior \(a\) is compatible with senior \(b\).
+    \item No other sober senior announces an LSE with senior \(b\).
+    \item Furthermore, if senior \(b\) is sober, \(b\) also announces an LSE with senior \(a\).
+    \end{enumerate}
+\item If some sober senior \(a\) announces that he/she is vegetating, no compatible sober senior announces the same.
+\end{enumerate}
+
+\subsection{Algorithm overview}
+The algorithm works in two phases - the first where all seniors try to reach consensus about which edges are in the graph, and then the second where all seniors independently figure out their LSE partner based off the agreed on edge set. For each senior, the senior:
+\begin{enumerate}
+    \item Sends a signed message to all neighbours.
+    \item Starts receiving messages. If the message only contains one signature (and is correctly the signature of the source), he/she signs it. Then we look at the first two signatures of the message. This represents an edge to place in our known edge list. We then broadcast this message to all other neighbours if we haven't already done so.
+    \item Insists that all neighbours must send back their (secondly) signed message we just sent to them in the first step.
+    \item Once there are no more messages in transit, we finalise the LSEs based off the known edge list by using a deterministic algorithm where we greedily match the lowest ID to the neighbour with the lowest ID.
+    \item Finally, they announce their LSE status.
+\end{enumerate}
+
+Note that we require the message channels to be buffered, as well as FIFO for the C implementation (due to 2PC).
+
+The only way (valid-according-to-the-spec) byzantine failure can occur is if a senior ``pretends'' to forward all broadcast messages, but only forwards to a subset of their neighbours (or none at all). Additionally, if a high senior refuses to add their signature to a message when it is required of them, any seniors that get forwarded the message would simply just drop them, which is equivalent to the senior never forwarding them in the first place.
+
+\subsection{Implementation differences}
+Both the C and Promela implementation implement the same basic idea. However, they differ in certain locations. The major difference is how they figure out that there are no more messages in transit.
+
+The C implementation has the nodes expecting acknowledgement replies after they broadcast an edge, similar to a two-phase commit protocol (but where rejection is not possible). Each node knows they are finished when they received all expected acknowledgements (this is equal to the total number of seniors in their connected subgraph, which is a reasonable to know beforehand).
+
+However, the Promela implementation has a shared variable representing the number of messages in transit, and nodes know they are finished when this number hits zero. This change is motivated to create a simpler Promela implementation while retaining the basic algorithm idea. This change is mostly safe as the extra messages created by the C implementation can only be tampered with a denial-of-service to the algorithm, and is thus not needed to be considered.
+
+The Promela implementation also does not read input. Instead it generates a test case at random in order to allow the model checker to verify all cases. It also has a check at the end to ensure that the final output is correct according to our correctness conditions listed below, and LTL to show that all seniors eventually terminate (every senior increment \texttt{finished} when they finish):
+\[\texttt{seniors\_finish}: \eventually(\texttt{finished} = \texttt{SENIORS})\]
+where \texttt{SENIORS} is the number of seniors.
+
+\texttt{atomic} and \texttt{d\_step} blocks are scattered all around the Promela, where it wouldn't effect the behaviour, to reduce the state space.
+
+High seniors are simulated by simply randomly or non-deterministically choosing whether they decide to forward an edge to a neighbour.
+
+\subsection{Model Checking with \texttt{spin}}
+First, to check for correctness, we ignore the LTL and use the following command:
+\begin{lstlisting}
+spin -run -noclaim lse.pml
+\end{lstlisting}
+
+To check the LTL, we use the following command:
+\begin{lstlisting}
+spin -run -a -f -ltl seniors_finish lse.pml
+\end{lstlisting}
+
+Unfortunately for any \(\texttt{SENIORS} > 2\), the state space grows too large and is intractable to model check completely (even with \texttt{-collapse}, it guzzled all our system memory). Thus to check larger graph sizes, we use \texttt{spin} as a fuzzer to randomly check different interleavings and configurations using the shell script in Listing \ref{lst:fuzzer}.
+
+\begin{lstlisting}[float, language = sh, caption = {Fuzzer for checking \(\texttt{SENIORS} > 2\)}, label = lst:fuzzer]
+#!/bin/bash
+
+set -e # Ensures that any failures will abort the script
+
+ITERATIONS_PER_SENIORS=100
+MIN_SENIORS=3
+MAX_SENIORS=9
+
+while true; do
+    for ((SENIORS=MIN_SENIORS; SENIORS<=MAX_SENIORS; ++SENIORS)); do
+        printf "Testing SENIORS = $SENIORS"
+        sed -i "s/^#define SENIORS .*/#define SENIORS $SENIORS/" lse.pml
+        for ((I=0; I<ITERATIONS_PER_SENIORS; ++I)); do
+            SEED="$RANDOM"
+            spin -n"$SEED" -B -b lse.pml > /dev/null
+            printf "."
+        done
+        echo
+    done
+done
+\end{lstlisting}
+
+\section{Complexity analysis}
+For message complexity, since every edge must get their own independent signatures  and then broadcast to every node (forwarding the message to all its neighbours, which is still order \(\mathcal{O}(N)\)), this gives a complexity of \(\mathcal{O}(N E)\), where \(N\) is the number of nodes and \(E\) is the number of edges. In the worst case \(N^2\) edges would exist, so the worst case is \(\mathcal{O}(N^3)\).
+
+For time complexity, each node has to wait for a ``message'' from every edge in the graph, so its complexity is simply \(\mathcal{O}(E)\), or \(\mathcal{O}(N^2)\) in the worst case.
+
+\section{Results}
+\begin{lstlisting}[float, caption = {\texttt{spin} output for correctness checking with \(\texttt{SENIORS} = 2\)}, label = lst:correctness]
+$ spin -run -noclaim lse.pml
+ltl seniors_finish: <> ((finished==2))
+
+(Spin Version 6.4.6 -- 2 December 2016)
+	+ Partial Order Reduction
+
+Full statespace search for:
+	never claim         	- (not selected)
+	assertion violations	+
+	cycle checks       	- (disabled by -DSAFETY)
+	invalid end states	+
+
+State-vector 372 byte, depth reached 166, errors: 0
+      653 states, stored
+      137 states, matched
+      790 transitions (= stored+matched)
+      399 atomic steps
+hash conflicts:         0 (resolved)
+
+Stats on memory usage (in Megabytes):
+    0.249	equivalent memory usage for states (stored*(State-vector + overhead))
+    0.457	actual memory usage for states
+  128.000	memory used for hash table (-w24)
+    0.534	memory used for DFS stack (-m10000)
+  128.925	total actual memory usage
+
+
+unreached in proctype seniorProcess
+	lse.pml:140, state 55, "(1)"
+	(1 of 156 states)
+unreached in init
+	(0 of 180 states)
+unreached in claim seniors_finish
+	_spin_nvr.tmp:4, state 3, "(!((finished==2)))"
+	_spin_nvr.tmp:6, state 6, "-end-"
+	(2 of 6 states)
+
+pan: elapsed time 0 second
+\end{lstlisting}
+
+\begin{lstlisting}[float, caption = {\texttt{spin} output for checking the LTL claim \texttt{seniors\_finish} with \(\texttt{SENIORS} = 2\)}, label = lst:reads-finish]
+$ spin -run -a -f -ltl seniors_finish lse.pml
+ltl seniors_finish: <> ((finished==2))
+warning: only one claim defined, -N ignored
+
+(Spin Version 6.4.6 -- 2 December 2016)
+	+ Partial Order Reduction
+
+Full statespace search for:
+	never claim         	+ (seniors_finish)
+	assertion violations	+ (if within scope of claim)
+	acceptance   cycles 	+ (fairness enabled)
+	invalid end states	- (disabled by never claim)
+
+State-vector 380 byte, depth reached 226, errors: 0
+      640 states, stored (3193 visited)
+     1799 states, matched
+     4992 transitions (= visited+matched)
+      711 atomic steps
+hash conflicts:         0 (resolved)
+
+Stats on memory usage (in Megabytes):
+    0.249	equivalent memory usage for states (stored*(State-vector + overhead))
+    0.457	actual memory usage for states
+  128.000	memory used for hash table (-w24)
+    0.534	memory used for DFS stack (-m10000)
+  128.925	total actual memory usage
+
+
+unreached in proctype seniorProcess
+	lse.pml:140, state 55, "(1)"
+	(1 of 156 states)
+unreached in init
+	lse.pml:319, state 175, "D_STEP319"
+	(1 of 180 states)
+unreached in claim seniors_finish
+	_spin_nvr.tmp:6, state 6, "-end-"
+	(1 of 6 states)
+
+pan: elapsed time 0 seconds
+\end{lstlisting}
+
+The output of \texttt{spin} for the correctness and LTL claim with \(\texttt{SENIORS} = 2\) are shown in Listings \ref{lst:correctness} and \ref{lst:reads-finish} respectively. Notably, no warnings and errors appear (excluding the one about an option being ignored). Similar output with no warnings and errors appeared with \(\texttt{SENIORS} = 1\).
+
+For \(\texttt{SENIORS} \in [3, 9]\), we used the script in Listing \ref{lst:fuzzer}. Running it for a few hours, it showed continuous progression, and did not terminate.
+
+\section{Discussion}
+No warnings and errors in \texttt{spin} output means whatever was checked was correct. For us, this means our algorithm is correct, and seniors eventually complete, assuming that \(\texttt{SENIORS} \in \{1, 2\}\).
+
+For \(\texttt{SENIORS} \in [3, 9]\), our fuzzing script infinitely loops the testing code, so it will only exit on error. The fact that it made continual progress without terminating means that both the seniors are finishing, and their LSE output was correct, for the random test cases chosen.
+
+\section{Proof of correctness}
+First, we shall restate our assumptions:
+
+\begin{enumerate}
+\item All sober seniors are connected.
+\item All seniors are connected.
+\end{enumerate}
+
+To prove our algorithm is correct, first we show that at the end of all the message passing, all sober seniors agree on which edges are in the graph. Suppose sober senior \(a\) thinks that some edge \((x, y)\) is in the graph. Then, \(a\) must have received a message signed by \(x\) then \(y\). Now, when a node receives a message, it broadcasts it if it hasn't done so already, and since all sober seniors are connected, this message must also be able to reach all other sober seniors. Thus all other sober seniors also think that this edge is in the graph.
+
+Now, we prove that this agreed on edge set contains all the important edges, that is, edges with at least one sober senior. Let there be an edge between senior \(a\) and \(b\), and, without loss of generality, let senior \(a\) be sober. Then, as senior \(a\) is expecting a signed message from \(b\), \(b\) must send it so as to not denial-of-service the algorithm. Then, \(a\) will announce that this edge exists, which will reach all other sober seniors as they are all connected. This set also cannot not contain an important edge that does not exist, as in order to do that, you would either have to forge a signature, or lie about the source of a message you send, both of which cannot happen.
+
+Now, when we run our deterministic LSE algorithm on the agreed on graph, it must give us a correct result because by the previous proof we know that all edges between two sober seniors exist, so we won't have two connected sober seniors both vegetating. The algorithm also cannot connect two sober seniors to the same other senior, so it passes that correctness condition as well.
+
+\end{document}
+
