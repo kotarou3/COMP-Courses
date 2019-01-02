@@ -1,0 +1,648 @@
+/* Mainly taken and modified from the POSIX shell standard:
+   http://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html */
+
+%{
+    use v5.10;
+    use strict;
+    use warnings;
+    use English;
+    use Switch;
+
+    sub getNextToken {
+        # Could use a trie for this, but too much effort
+        # Could also use a regex, but is harder to maintain
+        my @delimiters = ({
+            # Single character delimiters
+            " " => "SPACE",
+            "\t" => "SPACE",
+            "\n" => "NEWLINE",
+            "#" => "SL_COMMENT",
+            "\\" => "ESCAPE",
+            "'" => "SQUOTE",
+            "\"" => "DQUOTE",
+            "|" => "|",
+            ";" => ";",
+            "&" => "&",
+            "(" => "(",
+            ")" => ")",
+            ">" => ">",
+            "<" => "<",
+            "`" => "`"
+        }, {
+            # Two character delimiters
+            "&&" => "AND_IF",
+            "||" => "OR_IF",
+            ";;" => "DSEMI",
+            "<<" => "DLESS",
+            ">>" => "DGREAT",
+            "<>" => "LESSGREAT",
+            "\$(" => "COMMAND_SUB_START"
+        });
+
+        my $stateStack = $ARG[0]->YYData->{"stateStack"};
+        my $currentStateIgnoringWord = $stateStack->[-1] eq "word" ? $stateStack->[-2] : $stateStack->[-1];
+
+        # When in double quotes, it has delimiters of its own
+        if ($currentStateIgnoringWord eq "dquotes") {
+            @delimiters = ({
+                # Single character delimiters
+                "\\" => "ESCAPE",
+                "\"" => "DQUOTE",
+                ")" => ")",
+                "`" => "`"
+            }, {
+                # Two character delimiters
+                "\$(" => "COMMAND_SUB_START"
+            });
+        }
+
+        # Find the next delimiter
+        my ($nextDelim, $nextDelimType, $nextDelimIndex);
+        $nextDelimIndex = length $ARG[0]->YYData->{"DATA"};
+        if ($ARG[0]->YYData->{"DATA"} =~ /(\$(?:\\\n)?(?:[-@*#?\$!0-9]|[a-z_](?:\\\n|[a-z0-9_])*))/i) {
+            # Special case for $variables, since they are treated as normal text if the name isn't valid
+            $nextDelim = $1;
+            $nextDelimType = "VARIABLE";
+            $nextDelimIndex = $-[1];
+        }
+    findDelim:
+        for (my $c = 0; $c < $nextDelimIndex; ++$c) {
+            # Escaped newlines are interpreted as if they didn't exist except when in comments
+            # e.g., They can be placed inside a two-character delimiter (copies bash's behavior)
+            while (substr($ARG[0]->YYData->{"DATA"}, $c, 3) =~ s/^(?:[^\\#]\K)?\\\n//) {
+                $nextDelimIndex -= 2;
+            }
+
+            for (my $delimLength = scalar @delimiters; $delimLength > 0; --$delimLength) {
+                my $substr = substr($ARG[0]->YYData->{"DATA"}, $c, $delimLength);
+                if ($delimiters[$delimLength - 1]->{$substr}) {
+                    $nextDelim = $substr;
+                    $nextDelimType = $delimiters[$delimLength - 1]->{$substr};
+                    $nextDelimIndex = $c;
+                    last findDelim;
+                }
+            }
+        }
+
+        if ($nextDelimIndex != 0) {
+            # No special processing needed if in double quotes
+            if ($currentStateIgnoringWord eq "dquotes") {
+                return ("WORD_SQUOTED", substr($ARG[0]->YYData->{"DATA"}, 0, $nextDelimIndex, ""));
+            }
+
+            # Another special case for variable assignments, with same reason as above
+            $ARG[0]->YYData->{"DATA"} =~ s/^([a-z_][a-z0-9_]*)=//i and return ("VARIABLE_ASSIGNMENT", $1);
+
+            # Delimiter isn't immediately next, so return the bit in between
+            my $token = substr($ARG[0]->YYData->{"DATA"}, 0, $nextDelimIndex, "");
+
+            # Check for reserved words
+            my $type;
+            switch ($token) {
+                case "if" {$type = "If";}
+                case "then" {$type = "Then";}
+                case "else" {$type = "Else";}
+                case "elif" {$type = "Elif";}
+                case "fi" {$type = "Fi";}
+                case "do" {$type = "Do";}
+                case "done" {$type = "Done";}
+                case "case" {$type = "Case";}
+                case "esac" {$type = "Esac";}
+                case "while" {$type = "While";}
+                case "for" {$type = "For";}
+                case "!" {$type = "Bang";}
+                case "in" {$type = "In";}
+                case m/^[a-z_][a-z0-9_]*$/i {$type = "NAME";}
+                else {$type = "WORD";}
+            }
+
+            return ($type, $token);
+        } elsif ($nextDelimType eq "SL_COMMENT") {
+            # Comments go until the end of the line
+            $ARG[0]->YYData->{"DATA"} =~ s/^(#.*)// and return ("SL_COMMENT", $1);
+            die("Should never happen");
+        } elsif ($nextDelimType eq "VARIABLE") {
+            # Since a variable token is detected before the escaped newline removal, they have to be manually removed
+            substr($ARG[0]->YYData->{"DATA"}, 0, length $nextDelim, "");
+            $nextDelim =~ s/\\\n//g;
+            return ("VARIABLE", substr($nextDelim, 1)); # Don't include the $
+        } elsif ($nextDelimType eq "ESCAPE") {
+            # If we're in double quotes, only "escape" if [$`"\] follows
+            if ($currentStateIgnoringWord eq "dquotes") {
+                $ARG[0]->YYData->{"DATA"} =~ s/^\\([\$`"\\])// and return ("ESCAPED", $1);
+                $ARG[0]->YYData->{"DATA"} =~ s/^\\// or die("Should never happen");
+                return ("ESCAPED", "\\");
+            }
+
+            # If the stream ends before the escaped character, return nothing (not specified by POSIX, but is bash's behaviour)
+            $ARG[0]->YYData->{"DATA"} =~ s/^\\(.)// and return ("ESCAPED", $1);
+            $ARG[0]->YYData->{"DATA"} =~ /^\\\n/ and die("Should never happen");
+            return ("", undef);
+        } elsif ($nextDelimType eq "SQUOTE") {
+            # Single quotes includes everything until the next single quote
+            $ARG[0]->YYData->{"DATA"} =~ s/^'([^']*)'// and return ("WORD_SQUOTED", $1);
+            error($ARG[0], "unexpected EOF while looking for matching `''");
+            return ("", undef);
+        } elsif ($nextDelimType eq ")" && $currentStateIgnoringWord eq "dquotes") {
+            # ")" only has special meaning in double quotes when it is used to end a command substitution
+            $nextDelimType = "WORD_SQUOTED";
+        } elsif ($nextDelimType eq "`") {
+            # XXX: Hack to make grammar unambiguous
+            if ($currentStateIgnoringWord eq "cmd_sub_`") {
+                $nextDelimType = "BACKTICK_END";
+            } else {
+                $nextDelimType = "BACKTICK_START";
+            }
+        } elsif ($nextDelimType eq "SPACE") {
+            die("Should never happen");
+        }
+
+        substr($ARG[0]->YYData->{"DATA"}, 0, length $nextDelim, "");
+        return ($nextDelimType, $nextDelim);
+    }
+
+    sub lex {
+        my %reservedWordTypes = (
+            "If" => 1,
+            "Then" => 1,
+            "Else" => 1,
+            "Elif" => 1,
+            "Fi" => 1,
+            "Do" => 1,
+            "Done" => 1,
+            "Case" => 1,
+            "Esac" => 1,
+            "While" => 1,
+            "For" => 1,
+            "Bang" => 1,
+            "In" => 1
+        );
+        my %otherWordTypes = (
+            "NAME" => 1,
+            "WORD" => 1,
+            "WORD_SQUOTED" => 1,
+            "DQUOTE" => 1,
+            "VARIABLE" => 1,
+            "VARIABLE_ASSIGNMENT" => 1,
+            "ESCAPED" => 1,
+            "COMMAND_SUB_START" => 1, # End handled in parser
+            "BACKTICK_START" => 1
+        );
+
+        if (!$ARG[0]->YYData->{"stateStack"}) {
+            $ARG[0]->YYData->{"stateStack"} = ["top"];
+        }
+        my $stateStack = $ARG[0]->YYData->{"stateStack"};
+        my $currentStateIgnoringWord = $stateStack->[-1] eq "word" ? $stateStack->[-2] : $stateStack->[-1];
+
+        if (!$ARG[0]->YYData->{"queuedTokens"}) {
+            $ARG[0]->YYData->{"queuedTokens"} = [];
+        }
+
+        my ($tokenType, $tokenValue);
+        if (scalar @{$ARG[0]->YYData->{"queuedTokens"}}) {
+            ($tokenType, $tokenValue) = @{shift(@{$ARG[0]->YYData->{"queuedTokens"}})};
+        } else {
+            # Whitespace is ignored (outside of quotes)
+            if ($currentStateIgnoringWord ne "dquotes") {
+                if ($ARG[0]->YYData->{"DATA"} =~ s/^((?:[ \t]|\\\n)+)//) {
+                    if ($1 =~ /[ \t]/ && $stateStack->[-1] eq "word") {
+                        pop(@$stateStack);
+                        $currentStateIgnoringWord = $stateStack->[-1] eq "word" ? $stateStack->[-2] : $stateStack->[-1];
+                    }
+                }
+            }
+
+            if (length $ARG[0]->YYData->{"DATA"} == 0) {
+                return ("", undef);
+            }
+
+            ($tokenType, $tokenValue) = getNextToken($ARG[0]);
+        }
+
+        # Double quotes are never sent to the parser - they're implemented as a delimiter change in the lexer
+        if ($tokenType eq "DQUOTE" && $currentStateIgnoringWord eq "dquotes") {
+            if ($stateStack->[-1] eq "word") {
+                pop(@$stateStack);
+            }
+            pop(@$stateStack);
+            return lex($ARG[0]);
+        }
+
+        # A new word starting with a reserved word and not a reserved word is marked as a normal word to help with parsing
+        if ($stateStack->[-1] ne "word" && $reservedWordTypes{$tokenType} && $ARG[0]->YYData->{"DATA"} =~ /^[^ \t]/) {
+            my ($nextTokenType, $nextTokenValue) = getNextToken($ARG[0]);
+            push(@{$ARG[0]->YYData->{"queuedTokens"}}, [$nextTokenType, $nextTokenValue]);
+
+            if ($reservedWordTypes{$nextTokenType} || $otherWordTypes{$nextTokenType}) {
+                $tokenType = "WORD";
+            }
+        }
+
+        # If this is the second "word" type token in a row, insert a WORD_CONTINUATION in between
+        if ($reservedWordTypes{$tokenType} || $otherWordTypes{$tokenType}) {
+            if ($stateStack->[-1] eq "word") {
+                push(@{$ARG[0]->YYData->{"queuedTokens"}}, [$tokenType, $tokenValue]);
+                pop(@$stateStack); # Don't infinitely return WORD_CONTINUATIONs
+                return ("WORD_CONTINUATION", "");
+            } else {
+                push(@$stateStack, "word");
+            }
+        } elsif ($stateStack->[-1] eq "word") {
+            pop(@$stateStack);
+        }
+
+        if ($tokenType eq "DQUOTE") {
+            push(@$stateStack, "dquotes");
+            return lex($ARG[0]);
+        }
+
+        return ($tokenType, $tokenValue);
+    }
+
+    sub Lexer {
+        my ($type, $value) = lex($ARG[0]);
+
+        # Deduplicate WORD_CONTINUATIONs - happens for chained double quotes
+        if ($type eq "WORD_CONTINUATION" &&
+            $ARG[0]->YYData->{"lastToken"} &&
+            $ARG[0]->YYData->{"lastToken"}->[0] eq "WORD_CONTINUATION") {
+            return Lexer($ARG[0]);
+        }
+        $ARG[0]->YYData->{"lastToken"} = [$type, $value];
+
+        return ($type, $value);
+    }
+
+    sub createNode {
+        my $type = shift @ARG;
+        return {
+            "type" => $type,
+            "children" => \@ARG
+        };
+    }
+    sub createLeaf {
+        return {
+            "type" => $ARG[0],
+            "value" => $ARG[1]
+        };
+    }
+    sub appendNode {
+        my $node = shift @ARG;
+        push @{$node->{"children"}}, @ARG;
+        return $node;
+    }
+
+    sub mergeCommand {
+        my $result = shift @ARG;
+        foreach my $arg (@ARG) {
+            foreach my $key (keys %$arg) {
+                if (!$result->{$key}) {
+                    $result->{$key} = $arg->{$key};
+                } else {
+                    die("Merge conflict: $key\n");
+                }
+            }
+        }
+        return $result;
+    }
+
+    sub error {
+        print STDERR "Error: ", $ARG[1], "\n";
+        $ARG[0]->YYError();
+    }
+%}
+
+/* -------------------------------------------------------
+   The grammar symbols
+   ------------------------------------------------------- */
+%token  WORD
+%token  WORD_SQUOTED
+%token  WORD_CONTINUATION
+%token  COMMAND_SUB_START
+%token  BACKTICK_START
+%token  BACKTICK_END
+%token  NAME
+%token  NEWLINE
+%token  SL_COMMENT
+
+%token  HERE_STRING
+%token  VARIABLE
+%token  VARIABLE_ASSIGNMENT
+%token  ESCAPED
+
+/* The following are the operators. */
+
+%token  AND_IF    OR_IF    DSEMI
+/*      '&&'      '||'     ';;'    */
+
+%token  DLESS  DGREAT  LESSGREAT
+/*      '<<'   '>>'    '<>'      */
+
+
+/* The following are the reserved words. */
+
+%token  If    Then    Else    Elif    Fi    Do    Done
+/*      'if'  'then'  'else'  'elif'  'fi'  'do'  'done'   */
+
+
+%token  Case    Esac    While    For
+/*      'case'  'esac'  'while'  'for'   */
+
+
+/* These are reserved words, not operator tokens, and are
+   recognized when reserved words are recognized. */
+
+%token  Bang
+/*      '!'   */
+
+
+%token  In
+/*      'in'   */
+
+/* -------------------------------------------------------
+   The Grammar
+   ------------------------------------------------------- */
+%start file
+%%
+file             : list_opt_sep
+                 | linebreak
+                     {createNode("list", $ARG[1]);}
+                 ;
+list_no_sep      :             linebreak and_or
+                     {createNode("list", $ARG[1], $ARG[2]);}
+                 | list_no_sep separator and_or
+                     {appendNode($ARG[1], $ARG[2], $ARG[3]);}
+                 ;
+list             : list_no_sep separator
+                     {appendNode($ARG[1], $ARG[2]);}
+                 ;
+list_opt_sep     : list
+                 | list_no_sep
+                 ;
+and_or           :                         pipeline
+                     {createNode("and_or", $ARG[1]);}
+                 | and_or AND_IF linebreak pipeline
+                     {appendNode($ARG[1], $ARG[2], $ARG[3], $ARG[4]);}
+                 | and_or OR_IF  linebreak pipeline
+                     {appendNode($ARG[1], $ARG[2], $ARG[3], $ARG[4]);}
+                 ;
+pipeline         :      pipe_sequence
+                     {$ARG[1];}
+                 | Bang pipe_sequence
+                     {createLeaf("not", $ARG[2]);}
+                 ;
+pipe_sequence    :                             command
+                     {createNode("pipe_sequence", $ARG[1]);}
+                 | pipe_sequence '|' linebreak command
+                     {appendNode($ARG[1], $ARG[3], $ARG[4]);}
+                 ;
+command          : simple_command
+                     {createLeaf("simple_command", $ARG[1]);}
+                 | compound_command
+                     {createLeaf("compound_command", $ARG[1]);}
+                 | compound_command redirect_list
+                     {error($ARG[0], "IO redirection currently unsupported");}
+                 ;
+compound_command : for_clause
+                     {createLeaf("for_clause", $ARG[1]);}
+                 | case_clause
+                     {createLeaf("case_clause", $ARG[1]);}
+                 | if_clause
+                     {createLeaf("if_clause", $ARG[1]);}
+                 | while_clause
+                     {createLeaf("while_clause", $ARG[1]);}
+                 ;
+for_clause       : For NAME                                      do_group
+                     {
+                         {
+                             "var" => $ARG[2],
+                             "in" => createNode("wordlist", createNode("word", createLeaf("variable", "@"))),
+                             "action" => $ARG[3]
+                         };
+                     }
+                 | For NAME                       sequential_sep do_group
+                     {
+                         {
+                             "var" => $ARG[2],
+                             "in" => createNode("wordlist", createNode("word", createLeaf("variable", "@"))),
+                             "comments" => $ARG[3],
+                             "action" => $ARG[4]
+                         };
+                     }
+                 | For NAME linebreak In          sequential_sep do_group
+                     {{"var" => $ARG[2], "in" => createNode("wordlist"), "comments" => $ARG[5], "action" => $ARG[6]};}
+                 | For NAME linebreak In wordlist sequential_sep do_group
+                     {{"var" => $ARG[2], "in" => $ARG[5], "comments" => $ARG[6], "action" => $ARG[7]};}
+                 ;
+case_clause      : Case word linebreak In linebreak case_list    Esac
+                     {
+                         push(@{$ARG[3]->{"children"}}, @{$ARG[5]->{"children"}});
+                         {"word" => $ARG[2], "comments" => $ARG[3], "cases" => $ARG[6]};
+                     }
+                 | Case word linebreak In linebreak case_list_ns Esac
+                     {
+                         push(@{$ARG[3]->{"children"}}, @{$ARG[5]->{"children"}});
+                         {"word" => $ARG[2], "comments" => $ARG[3], "cases" => $ARG[6]};
+                     }
+                 | Case word linebreak In linebreak              Esac
+                     {
+                         push(@{$ARG[3]->{"children"}}, @{$ARG[5]->{"children"}});
+                         {"word" => $ARG[2], "comments" => $ARG[3]};
+                     }
+                 ;
+case_list_ns     : case_list case_item_ns
+                     {push @{$ARG[1]}, $ARG[2]; $ARG[1];}
+                 |           case_item_ns
+                     {[$ARG[1]];}
+                 ;
+case_list        : case_list case_item
+                     {push @{$ARG[1]}, $ARG[2]; $ARG[1];}
+                 |           case_item
+                     {[$ARG[1]];}
+                 ;
+case_item_ns     :     pattern ')'      linebreak
+                     {{"case" => $ARG[1], "comments" => $ARG[3]};}
+                 |     pattern ')' list linebreak
+                     {{"case" => $ARG[1], "action" => $ARG[3], "comments" => $ARG[4]};}
+                 | '(' pattern ')'      linebreak
+                     {{"case" => $ARG[2], "comments" => $ARG[4]};}
+                 | '(' pattern ')' list linebreak
+                     {{"case" => $ARG[2], "action" => $ARG[4], "comments" => $ARG[5]};}
+                 ;
+case_item        :     pattern ')' linebreak    DSEMI linebreak
+                     {
+                         push(@{$ARG[3]->{"children"}}, @{$ARG[5]->{"children"}});
+                         {"case" => $ARG[1], "comments" => $ARG[3]};
+                     }
+                 |     pattern ')' list_opt_sep DSEMI linebreak
+                     {{"case" => $ARG[1], "action" => $ARG[3], "comments" => $ARG[5]};}
+                 | '(' pattern ')' linebreak    DSEMI linebreak
+                     {
+                         push(@{$ARG[4]->{"children"}}, @{$ARG[6]->{"children"}});
+                         {"case" => $ARG[2], "comments" => $ARG[4]};
+                     }
+                 | '(' pattern ')' list_opt_sep DSEMI linebreak
+                     {{"case" => $ARG[2], "action" => $ARG[4], "comments" => $ARG[6]};}
+                 ;
+pattern          :             word
+                     {[$ARG[1]];}
+                 | pattern '|' word
+                     {push @{$ARG[1]}, $ARG[3]; $ARG[1];}
+                 ;
+if_clause        : If list Then list else_part Fi
+                     {{"condition" => $ARG[2], "then" => $ARG[4], "else" => $ARG[5]};}
+                 | If list Then list           Fi
+                     {{"condition" => $ARG[2], "then" => $ARG[4]};}
+                 ;
+else_part        : Elif list Then list else_part
+                     {{"condition" => $ARG[2], "then" => $ARG[4], "else" => $ARG[5]};}
+                 | Elif list Then list
+                     {{"condition" => $ARG[2], "then" => $ARG[4]};}
+                 | Else list
+                     {$ARG[2];}
+                 ;
+while_clause     : While list do_group
+                     {{"condition" => $ARG[2], "then" => $ARG[3]};}
+                 ;
+do_group         : Do list Done
+                     {$ARG[2];}
+                 ;
+simple_command   : cmd_prefix word_no_assign cmd_suffix
+                     {mergeCommand($ARG[1], $ARG[3], {"command" => $ARG[2]});}
+                 | cmd_prefix word_no_assign
+                     {mergeCommand($ARG[1], {"command" => $ARG[2]});}
+                 | cmd_prefix
+                 | word_no_assign cmd_suffix
+                     {mergeCommand($ARG[2], {"command" => $ARG[1]});}
+                 | word_no_assign
+                     {{"command" => $ARG[1]};}
+                 ;
+cmd_prefix       :            io_redirect
+                     {error($ARG[0], "IO redirection currently unsupported");}
+                 | cmd_prefix io_redirect
+                     {error($ARG[0], "IO redirection currently unsupported");}
+                 |            assignment_word
+                     {{"assignment" => [$ARG[1]]};}
+                 | cmd_prefix assignment_word
+                     {push @{$ARG[1]->{"assignment"}}, $ARG[2]; $ARG[1];}
+                 ;
+cmd_suffix       :            io_redirect
+                     {error($ARG[0], "IO redirection currently unsupported");}
+                 | cmd_suffix io_redirect
+                     {error($ARG[0], "IO redirection currently unsupported");}
+                 |            word_or_reserved
+                     {{"args" => [$ARG[1]]}}
+                 | cmd_suffix word_or_reserved
+                     {push @{$ARG[1]->{"args"}}, $ARG[2]; $ARG[1];}
+                 ;
+redirect_list    :               io_redirect
+                 | redirect_list io_redirect
+                 ;
+io_redirect      : io_file
+                 | DLESS HERE_STRING
+                 ;
+io_file          : '<'       word
+                 | '>'       word
+                 | DGREAT    word
+                 | LESSGREAT word
+                 ;
+newline          : NEWLINE
+                 | SL_COMMENT
+                 ;
+newline_list     :              newline
+                     {createNode("newline_list", $ARG[1]);}
+                 | newline_list newline
+                     {appendNode($ARG[1], $ARG[2]);}
+                 ;
+linebreak        : newline_list
+                 | /* empty */
+                     {createNode("newline_list");}
+                 ;
+separator_op     : '&'
+                 | ';'
+                 ;
+separator        : separator_op linebreak
+                     {$ARG[2];}
+                 | newline_list
+                 ;
+sequential_sep   : ';' linebreak
+                     {$ARG[2];}
+                 | newline_list
+                 ;
+
+/* Word definition aka quote/variable/escape parsing */
+wordlist         :          word
+                     {createNode("wordlist", $ARG[1]);}
+                 | wordlist word
+                     {appendNode($ARG[1], $ARG[2]);}
+                 ;
+word_or_reserved : word
+                 | reserved_word
+                     {createNode("word", $ARG[1]);}
+                 ;
+word             : word_no_assign
+                 | assignment_word
+                     {
+                         if ($ARG[1]->{"value"}) {
+                             unshift(@{$ARG[1]->{"value"}->{"children"}}, $ARG[1]->{"var"} . "=");
+                             $ARG[1]->{"value"};
+                         } else {
+                             createNode("word", $ARG[1]->{"var"} . "=");
+                         }
+                     }
+                 ;
+word_no_assign   :                                  word_part
+                     {createNode("word", $ARG[1]);}
+                 | word_no_assign WORD_CONTINUATION word_part
+                     {appendNode($ARG[1], $ARG[3]);}
+                 | word_no_assign WORD_CONTINUATION reserved_word
+                     {appendNode($ARG[1], $ARG[3]);}
+                 | word_no_assign WORD_CONTINUATION VARIABLE_ASSIGNMENT
+                     {appendNode($ARG[1], $ARG[3] . "=");}
+                 ;
+begin_cmd_sub    : /* empty; used to change lexer state */
+                     {push(@{$ARG[0]->YYData->{"stateStack"}}, "cmd_sub_\$(");}
+                 ;
+end_cmd_sub      : /* empty; used to change lexer state */
+                     {pop(@{$ARG[0]->YYData->{"stateStack"}}) eq "cmd_sub_\$(" or die("Should never happen");}
+                 ;
+begin_cmd_sub_bt : /* empty; used to change lexer state */
+                     {push(@{$ARG[0]->YYData->{"stateStack"}}, "cmd_sub_`");}
+                 ;
+end_cmd_sub_bt   : /* empty; used to change lexer state */
+                     {pop(@{$ARG[0]->YYData->{"stateStack"}}) eq "cmd_sub_`" or die("Should never happen");}
+                 ;
+word_part        : WORD
+                 | WORD_SQUOTED
+                     {createLeaf("word_squoted", $ARG[1]);}
+                 | COMMAND_SUB_START begin_cmd_sub file ')' end_cmd_sub
+                     {$ARG[3];}
+                 | BACKTICK_START begin_cmd_sub_bt file BACKTICK_END end_cmd_sub_bt
+                     {$ARG[3];}
+                 | VARIABLE
+                     {createLeaf("variable", $ARG[1]);}
+                 | NAME
+                 | ESCAPED
+                     {createLeaf("word_squoted", $ARG[1]);} /* Functionally the same */
+                 ;
+reserved_word    : If
+                 | Then
+                 | Else
+                 | Elif
+                 | Fi
+                 | Do
+                 | Done
+                 | Case
+                 | Esac
+                 | While
+                 | For
+                 | Bang
+                 | In
+                 ;
+assignment_word  : VARIABLE_ASSIGNMENT WORD_CONTINUATION word
+                     {{"var" => $ARG[1], "value" => $ARG[3]};}
+                 | VARIABLE_ASSIGNMENT
+                     {{"var" => $ARG[1]};}
+                 ;
+%%
