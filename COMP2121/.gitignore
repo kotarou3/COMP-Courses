@@ -1,0 +1,14 @@
+*
+!upload.sh
+!Makefile
+!Makefile.inc
+!lib/avrasm2.exe
+!lib/S2asm.jison
+!lib/include/m2560def.inc
+!lib/include/util.inc
+
+!**/
+!**/*.c
+!**/*.h
+!**/*.S
+!**/Makefile
