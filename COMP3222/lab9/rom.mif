@@ -1,0 +1,22 @@
+DEPTH = 32;
+WIDTH = 9;
+ADDRESS_RADIX = HEX;
+DATA_RADIX = OCT;
+CONTENT
+BEGIN
+00: 100 123; -- mvi r0, 0o123
+02: 110 456; -- mvi r1, 0o456
+04: 120 753; -- mvi r2, 0o753
+06: 030;     -- mv r3, r0
+07: 241;     -- add r4, r1
+08: 352;     -- sub r5, r2
+09: 253;     -- add r5, r3
+0a: 354;     -- sub r5, r4
+0b: 005;     -- mov r0, r5
+-- r0 should now equal 0o472
+-- Do nothing for the remainder of the ROM
+[0c..1d]: 000;
+-- ...except clear the scratch registers
+1e: 047;     -- mov r4, r7
+1f: 057;     -- mov r5, r7
+END;
