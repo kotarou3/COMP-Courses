@@ -1,0 +1,11 @@
+*
+!Makefile
+!Makefile.inc
+
+!**/
+!**/*.c
+!**/*.h
+!**/*.js
+!**/*.sh
+!**/*.txt
+!**/Makefile
