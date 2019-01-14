@@ -2,3 +2,7 @@
 	path = COMP1917
 	url = https://github.com/kotarou3/COMP1917-Assignment.git
 	branch = master
+[submodule "COMP3891"]
+	path = COMP3891
+	url = https://github.com/kotarou3/COMP3891-Assignments.git
+	branch = master
