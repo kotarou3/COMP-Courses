@@ -1,0 +1,4 @@
+[submodule "COMP1917"]
+	path = COMP1917
+	url = https://github.com/kotarou3/COMP1917-Assignment.git
+	branch = master
