@@ -6,3 +6,7 @@
 	path = COMP3891
 	url = https://github.com/kotarou3/COMP3891-Assignments.git
 	branch = master
+[submodule "COMP9242"]
+	path = COMP9242
+	url = https://github.com/kotarou3/COMP9242-Labs.git
+	branch = master
